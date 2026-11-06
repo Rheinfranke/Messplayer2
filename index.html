@@ -115,8 +115,10 @@
 <fieldset>
   <legend>6. Daten speichern</legend>
   <button class="main" id="saveall">Alles speichern (ZIP)</button>
+  <button class="main" id="shareall">Teilen</button>
+  <button class="main" id="sharenow" style="display:none">Jetzt teilen</button>
   <button id="clear">Gespeicherte Daten löschen</button>
-  <div id="savestatus" class="hint">Speichert eine ZIP-Datei in die Downloads. Diese Datei unverändert an Claude schicken.</div>
+  <div id="savestatus" class="hint">„Alles speichern“ legt die ZIP-Datei in die Downloads. „Teilen“ öffnet das Teilen-Menü, z. B. für E-Mail, WhatsApp oder die Claude-App. Die Datei unverändert an Claude schicken.</div>
 </fieldset>
 
 <div id="logwrap"><table id="log"><thead><tr><th>Typ</th><th>Block</th><th>Bezeichnung</th><th>Start</th><th>Ende</th></tr></thead><tbody></tbody></table></div>
@@ -527,6 +529,7 @@ class Tracker {
     this.sec = null; this.agg = null; this.bg = null; this.last = null;
   }
   step(now) {
+    if (this.lastT && now - this.lastT > 1500) this.gap(now);
     const an = this.an, fd = this.fd, td = this.td;
     an.getFloatTimeDomainData(td); an.getFloatFrequencyData(fd);
     let e = 0; for (let i = 0; i < td.length; i++) e += td[i] * td[i];
@@ -575,8 +578,9 @@ class Tracker {
     const dur = Math.max(0.025, (now - v.t) / 1000 - v.below * (this.dtF || 0.025)), flat = v.flat / v.n, cen = v.cen / v.n;
     let cls = "Sonstiges";
     const inMusic = this.last && this.last.cls === "Musik";
-    if (dur < 0.35 && v.rise > 12 && flat > 0.2) cls = "Knall";
-    else if (inMusic && dur < 0.5) cls = "Musik-Einsatz";
+    if (inMusic && dur < 0.5) cls = "Musik-Einsatz";
+    else if (v.rise > 20 && dur < 1.0) cls = v.pkf < 800 && cen < 1300 ? "Klopfen" : cen > 2500 ? "Klatschen/Schnipsen" : "Knall";
+    else if (dur < 0.35 && v.rise > 12 && flat > 0.2) cls = "Knall";
     else if (this.last && this.last.cls === "Sprache" && v.max - v.bg < 30) cls = "Sprache-Einsatz";
     else if (dur >= 0.3 && flat < 0.12 && v.pkf >= 250 && v.pkf <= 3500) cls = "Hupe/Ton";
     else if (dur >= 0.2 && dur <= 3 && cen >= 300 && cen <= 3000) cls = "Ruf/Stimme";
@@ -616,12 +620,18 @@ class Tracker {
     const flat = g.flat / g.n, cen = g.cen / g.n;
     let cls = "gemischt";
     if (lev < -65) cls = "Ruhe";
-    else if (tstr > 0.3 || (kstr > 0.75 && sd < 4)) cls = "Musik";
+    else if (flat < 0.3 && (tstr > 0.3 || (kstr > 0.75 && sd < 4))) cls = "Musik";
     else if (sd > 5 && cen > 300 && cen < 3500 && flat < 0.35) cls = "Sprache";
     else if (flat > 0.3) cls = "Rauschen/Lärm";
     const r = { t: now, s: micRec || sessionId, src: this.src, lev, max: g.max, bg: this.bg, B: dB(g.B / g.n), M: dB(g.M / g.n), H: dB(g.H / g.n), cen, flat, on: g.on, bpm, tstr, key, kstr, cls, ph: phones };
     put("snd", r); this.last = r;
     if (this.detect) this.noise(now);
+  }
+  gap(now) {
+    const sec = Math.round((now - this.lastT) / 1000);
+    if (this.detect) addEntry({ typ: "Klang", name: `Klanglücke von ${sec} s (Seite angehalten)`, start: this.lastT, end: now });
+    this.flux = []; this.fluxT = []; this.agg = null; this.sec = null;
+    this.resetBg(now);
   }
   resetBg(now) {
     this.frames = []; this.bg = null; this.bgMin = null; this.t0 = now; this.evt = null; this.loudRun = 0; this.quietRun = 0;
@@ -787,7 +797,7 @@ function makeZip(files) {
   return new Blob([...parts, ...central, e.buffer], { type: "application/zip" });
 }
 function tcols(ms) { const d = new Date(ms); return [dstamp(d), stamp(d), Math.round(ms)]; }
-$("saveall").addEventListener("click", async () => {
+async function buildZip() {
   $("savestatus").textContent = "Stelle Daten zusammen …";
   await flush();
   const [L, BT, SN, EV, AC, EC] = await Promise.all(["log", "beat", "snd", "evt", "acc", "ecg"].map(readKind));
@@ -820,11 +830,36 @@ $("saveall").addEventListener("click", async () => {
       for (let i = 0; i < n; i++) { const off = (n - 1 - i) * dt; s.push([c.s ?? "", Math.round(c.t - off), Math.round(c.us - off * 1000), c.v[i]].join(";")); } });
     files.push({ name: "EKG.csv", text: s.join("\n") });
   }
-  const blob = makeZip(files), a = document.createElement("a");
-  a.href = URL.createObjectURL(blob); a.download = "Messdaten2_" + idstamp(new Date()) + ".zip";
+  const blob = makeZip(files);
+  return { blob, name: "Messdaten2_" + idstamp(new Date()) + ".zip", list: files.map(f => f.name).join(", ") };
+}
+$("saveall").addEventListener("click", async () => {
+  const z = await buildZip(), a = document.createElement("a");
+  a.href = URL.createObjectURL(z.blob); a.download = z.name;
   document.body.appendChild(a); a.click(); a.remove();
-  $("savestatus").textContent = `Gespeichert: ${files.map(f => f.name).join(", ")} (${(blob.size / 1e6).toFixed(1)} MB). Die Datei liegt in den Downloads.`;
+  $("savestatus").textContent = `Gespeichert: ${z.list} (${(z.blob.size / 1e6).toFixed(1)} MB). Die Datei liegt in den Downloads.`;
 });
+let shareFile = null;
+async function doShare() {
+  try {
+    await navigator.share({ files: [shareFile], title: shareFile.name, text: "Messdaten Biodanza Messplayer" });
+    $("savestatus").textContent = "Geteilt: " + shareFile.name;
+    $("sharenow").style.display = "none"; addEntry({ typ: "Daten", name: "ZIP geteilt: " + shareFile.name, start: Date.now() });
+  } catch (e) {
+    if (e.name === "AbortError") { $("savestatus").textContent = "Teilen abgebrochen."; return; }
+    if (e.name === "NotAllowedError") { $("sharenow").style.display = "inline-block"; $("savestatus").textContent = "Die Datei ist fertig. Bitte auf „Jetzt teilen“ tippen."; return; }
+    $("savestatus").textContent = "Teilen nicht möglich (" + (e.message || e.name) + "). Bitte „Alles speichern“ benutzen.";
+  }
+}
+$("shareall").addEventListener("click", async () => {
+  const z = await buildZip();
+  shareFile = new File([z.blob], z.name, { type: "application/zip" });
+  if (!navigator.canShare || !navigator.canShare({ files: [shareFile] })) {
+    $("savestatus").textContent = "Dieser Browser kann keine Dateien teilen. Bitte „Alles speichern“ benutzen."; return;
+  }
+  doShare();
+});
+$("sharenow").addEventListener("click", doShare);
 let armed = false;
 $("clear").addEventListener("click", async () => {
   if (!armed) { armed = true; $("clear").textContent = "Wirklich löschen? Vorher speichern! Nochmal tippen"; setTimeout(() => { armed = false; $("clear").textContent = "Gespeicherte Daten löschen"; }, 5000); return; }
