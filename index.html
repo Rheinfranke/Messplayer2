@@ -214,6 +214,17 @@ setInterval(() => { if (needAwake() && document.visibilityState === "visible") k
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && needAwake()) keepAwake(); });
 document.addEventListener("pointerdown", () => { if (needAwake()) keepAwake(); });
 
+let hiddenSince = null;
+document.addEventListener("visibilitychange", () => {
+  if (!needAwake()) return;
+  if (document.visibilityState === "hidden") { hiddenSince = Date.now(); addEntry({ typ: "Bildschirm", name: "Seite im Hintergrund, Messung kann aussetzen", start: hiddenSince }); flush(); }
+  else if (hiddenSince) {
+    const s = Math.round((Date.now() - hiddenSince) / 1000);
+    addEntry({ typ: "Bildschirm", name: `Seite wieder im Vordergrund nach ${s} s`, start: hiddenSince, end: Date.now() });
+    if (s > 5) $("savestatus").textContent = `Achtung: Die Seite war ${s} s im Hintergrund. In dieser Zeit fehlen vermutlich Herzschläge und Klangwerte.`;
+    hiddenSince = null;
+  }
+});
 let recStart = null;
 setInterval(() => {
   $("dur").textContent = recStart && needAwake() ? "Aufzeichnung läuft seit " + hms((Date.now() - recStart) / 1000) : "keine Aufzeichnung";
@@ -511,7 +522,7 @@ class Tracker {
     this.prev = new Float32Array(this.n); this.hz = ctx.sampleRate / an.fftSize;
     this.pc = new Int8Array(this.n).fill(-1);
     for (let k = 1; k < this.n; k++) { const f = k * this.hz; if (f >= 80 && f <= 5000) this.pc[k] = ((Math.round(12 * Math.log2(f / 440)) + 9) % 12 + 12) % 12; }
-    this.flux = []; this.frames = []; this.chroma = new Float32Array(12); this.lastDb = -120; this.lastOn = 0;
+    this.flux = []; this.fluxT = []; this.frames = []; this.chroma = new Float32Array(12); this.lastDb = -120; this.lastOn = 0;
     this.evt = null; this.bgMin = null; this.loud = null; this.loudRun = 0; this.quietRun = 0; this.t0 = Date.now();
     this.sec = null; this.agg = null; this.bg = null; this.last = null;
   }
@@ -531,9 +542,9 @@ class Tracker {
       if (this.pc[k] >= 0) ch[this.pc[k]] += mag;
     }
     const flat = cnt ? Math.exp(lg / cnt) / (sp / cnt + 1e-20) : 0, cen = sp ? sfp / sp : 0;
-    this.flux.push(fl); this.frames.push([now, lev]);
+    this.flux.push(fl); this.fluxT.push(now); if (lev > -150) this.frames.push([now, lev]);
     while (this.frames.length && now - this.frames[0][0] > 30000) this.frames.shift();
-    while (this.flux.length > 400) this.flux.shift();
+    while (this.flux.length > 400) { this.flux.shift(); this.fluxT.shift(); }
     // Einsatz (Onset)
     const L = this.flux.length; let onset = false;
     if (L > 40) {
@@ -541,7 +552,7 @@ class Tracker {
       if (b > thr && b > a && b >= c && now - this.lastOn > 100 && lev > -70) { onset = true; this.lastOn = now; }
     }
     // Tonart-Gedächtnis (ca. 15 s)
-    if (lev > -60) { const s = ch.reduce((x, y) => x + y, 0) + 1e-12; for (let i = 0; i < 12; i++) this.chroma[i] = this.chroma[i] * 0.9983 + ch[i] / s; }
+    if (lev > -75 && this.bg !== null && lev > this.bg + 6) { const s = ch.reduce((x, y) => x + y, 0) + 1e-12; for (let i = 0; i < 12; i++) this.chroma[i] = this.chroma[i] * 0.9983 + ch[i] / s; }
     // Sekunde sammeln
     const sec = Math.floor(now / 1000);
     if (this.sec !== null && sec !== this.sec) this.closeSecond();
@@ -556,20 +567,22 @@ class Tracker {
         if (v.below >= 3 || now - v.t > 10000) this.endEvent(now);
       }
     }
-    this.lastDb = lev;
+    if (this.lastT) this.dtF = 0.95 * (this.dtF || 0.025) + 0.05 * (now - this.lastT) / 1000;
+    this.lastT = now; this.lastDb = lev;
   }
   endEvent(now) {
     const v = this.evt; this.evt = null;
-    const dur = Math.max(0.025, (now - v.t) / 1000 - v.below * 0.025), flat = v.flat / v.n, cen = v.cen / v.n;
+    const dur = Math.max(0.025, (now - v.t) / 1000 - v.below * (this.dtF || 0.025)), flat = v.flat / v.n, cen = v.cen / v.n;
     let cls = "Sonstiges";
     const inMusic = this.last && this.last.cls === "Musik";
     if (dur < 0.35 && v.rise > 12 && flat > 0.2) cls = "Knall";
     else if (inMusic && dur < 0.5) cls = "Musik-Einsatz";
+    else if (this.last && this.last.cls === "Sprache" && v.max - v.bg < 30) cls = "Sprache-Einsatz";
     else if (dur >= 0.3 && flat < 0.12 && v.pkf >= 250 && v.pkf <= 3500) cls = "Hupe/Ton";
     else if (dur >= 0.2 && dur <= 3 && cen >= 300 && cen <= 3000) cls = "Ruf/Stimme";
     const r = { t: v.t, s: micRec, src: this.src, dur, max: v.max, bg: v.bg, ueber: v.max - v.bg, rise: v.rise, flat, cen, pkf: v.pkf, cls, ph: phones };
     put("evt", r);
-    if (cls === "Musik-Einsatz") return;
+    if (cls === "Musik-Einsatz" || cls === "Sprache-Einsatz") return;
     $("evt").textContent = `${stamp(new Date(v.t)).slice(0, 8)} ${cls}, ${(v.max - v.bg).toFixed(0)} dB über Hintergrund, ${dur.toFixed(1)} s`;
   }
   closeSecond() {
@@ -582,7 +595,7 @@ class Tracker {
     const fx = this.flux.slice(-320);
     if (fx.length >= 240) {
       const mu = fx.reduce((a, b) => a + b, 0) / fx.length, x = fx.map(v => v - mu);
-      const r0 = x.reduce((a, b) => a + b * b, 0) + 1e-12, dt = 0.025, ac = [];
+      const ft = this.fluxT.slice(-fx.length), dt = (ft[ft.length - 1] - ft[0]) / 1000 / (ft.length - 1), r0 = x.reduce((a, b) => a + b * b, 0) + 1e-12, ac = [];
       const lo = Math.round(60 / 190 / dt), hi = Math.round(60 / 55 / dt);
       for (let lag = lo - 1; lag <= hi + 1; lag++) { let s = 0; for (let i = lag; i < x.length; i++) s += x[i] * x[i - lag]; ac[lag] = s / r0; }
       let bl = lo; for (let lag = lo; lag <= hi; lag++) if (ac[lag] > ac[bl]) bl = lag;
@@ -610,6 +623,10 @@ class Tracker {
     put("snd", r); this.last = r;
     if (this.detect) this.noise(now);
   }
+  resetBg(now) {
+    this.frames = []; this.bg = null; this.bgMin = null; this.t0 = now; this.evt = null; this.loudRun = 0; this.quietRun = 0;
+    if (this.loud) { addEntry({ typ: "Dauerlärm", name: "Ende (Messung neu eingestellt)", start: this.loud.t, end: now }); this.loud = null; }
+  }
   noise(now) {
     if (this.bg === null || now - this.t0 < 30000) return;
     this.bgMin = this.bgMin === null ? this.bg : Math.min(this.bgMin, this.bg);
@@ -633,8 +650,8 @@ setInterval(() => {
   const r = m.last, tag = trackers.length > 1 ? ` (${m.src})` : "";
   $("lv").textContent = `${r.lev.toFixed(0)} dBFS · Hintergrund ${r.bg !== null ? r.bg.toFixed(0) : "–"} dBFS${tag}`;
   $("bands").textContent = `${r.B.toFixed(0)} / ${r.M.toFixed(0)} / ${r.H.toFixed(0)} dB · Schwerpunkt ${Math.round(r.cen)} Hz`;
-  $("tempo").textContent = r.bpm ? `ca. ${Math.round(r.bpm)} Schläge/min (Deutlichkeit ${r.tstr.toFixed(2)}) · ${r.on} Einsätze/s` : "sammle Daten …";
-  $("key").textContent = r.key ? `${r.key} (Deutlichkeit ${r.kstr.toFixed(2)})` : "–";
+  $("tempo").textContent = !r.bpm ? "sammle Daten …" : r.tstr >= 0.3 ? `ca. ${Math.round(r.bpm)} Schläge/min (Deutlichkeit ${r.tstr.toFixed(2)}) · ${r.on} Einsätze/s` : `kein deutlicher Takt · ${r.on} Einsätze/s`;
+  $("key").textContent = r.key && r.kstr >= 0.6 && r.cls !== "Ruhe" ? `${r.key} (Deutlichkeit ${r.kstr.toFixed(2)})` : "keine deutliche Tonart";
   $("cls").textContent = r.cls;
 }, 1000);
 
@@ -646,7 +663,11 @@ async function listMics() {
     sel.value = cur;
   } catch (e) {}
 }
-navigator.mediaDevices?.addEventListener?.("devicechange", () => { listMics(); if (micOn || running) addEntry({ typ: "Audiogerät", name: "Audiogeräte geändert (Kopfhörer verbunden oder getrennt?)", start: Date.now() }); });
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  listMics();
+  if (micOn || running) addEntry({ typ: "Audiogerät", name: "Audiogeräte geändert (Kopfhörer verbunden oder getrennt?)", start: Date.now() });
+  trackers.forEach(t => { if (t.src === "Mikro") t.resetBg(Date.now()); });
+});
 $("micstart").addEventListener("click", async () => {
   try {
     ensureCtx();
