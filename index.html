@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biodanza Messplayer 2</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 680px; margin: 1.5rem auto; padding: 0 1rem; color: #222; background: #fafaf7; line-height: 1.5; }
+  h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 0.2rem; }
+  fieldset { border: 1px solid #ccc; border-radius: 8px; margin: 1rem 0; padding: 0.8rem 1rem; }
+  legend { padding: 0 0.4rem; color: #555; }
+  label { display: block; margin: 0.4rem 0; }
+  input[type=number] { width: 5rem; font-size: 1rem; }
+  input[type=text] { width: 60%; font-size: 1rem; padding: 0.3rem; }
+  select { font-size: 1rem; padding: 0.2rem; max-width: 100%; }
+  button { font-size: 1rem; padding: 0.55rem 1rem; border-radius: 8px; border: 1px solid #888; background: #fff; cursor: pointer; margin: 0.25rem 0.25rem 0.25rem 0; }
+  button.main { background: #2d6a4f; color: #fff; border-color: #2d6a4f; }
+  button.act { background: #eef4f0; border-color: #9bb8a6; }
+  button.act.on, button.tog.on { background: #2d6a4f; color: #fff; border-color: #2d6a4f; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  #now { font-size: 1.5rem; margin: 0.8rem 0 0.1rem; min-height: 2rem; }
+  #sub, .stat { color: #555; font-variant-numeric: tabular-nums; }
+  .ok { color: #2d6a4f; } .miss { color: #a33; } .err { color: #a33; font-size: 0.9rem; }
+  .hint { color: #555; font-size: 0.9rem; }
+  .warn { background: #fff4d6; border: 1px solid #e5c46b; border-radius: 8px; padding: 0.5rem 0.8rem; margin: 0.8rem 0; font-size: 0.9rem; }
+  #bar { position: sticky; top: 0; z-index: 10; background: #fafaf7; border-bottom: 1px solid #ddd; padding: 0.4rem 0; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+  #wl.good { color: #2d6a4f; } #wl.bad { color: #fff; background: #a33; padding: 0 0.4rem; border-radius: 4px; }
+  .live { display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.8rem; font-size: 0.9rem; font-variant-numeric: tabular-nums; margin-top: 0.4rem; }
+  .live span:nth-child(odd) { color: #777; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; margin-top: 0.8rem; }
+  td, th { border-bottom: 1px solid #ddd; padding: 0.25rem 0.4rem; text-align: left; font-variant-numeric: tabular-nums; }
+  #logwrap { max-height: 16rem; overflow: auto; }
+  .rv { border-bottom: 1px solid #e5e5e0; padding: 0.4rem 0; }
+  .rv b { font-weight: 500; }
+  .rv button { font-size: 0.9rem; padding: 0.35rem 0.6rem; }
+  .rv button.on { background: #2d6a4f; color: #fff; border-color: #2d6a4f; }
+  #blackout { display: none; position: fixed; inset: 0; background: #000; z-index: 9999; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  #unlockq { display: none; position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); background: #111; border: 1px solid #333; border-radius: 12px; padding: 1rem 1.2rem; text-align: center; color: #999; font-size: 1rem; }
+  #unlockq button { background: #222; color: #ccc; border-color: #444; margin: 0.6rem 0.4rem 0; min-width: 6rem; }
+</style>
+</head>
+<body>
+<h1>Biodanza Messplayer 2</h1>
+<div class="hint">Herz, Atmung, Bewegung, Klangumgebung und Musik mit derselben Uhr. Gurt, Mikrofon und Musik laufen unabhängig voneinander.</div>
+
+<div id="bar"><span id="wl">Bildschirm: nicht nötig</span> · <span id="dur">keine Aufzeichnung</span> · <span id="mem">Speicher …</span></div>
+
+<fieldset>
+  <legend>0. Brustgurt verbinden (eSense, Polar H10 oder jeder Bluetooth-Pulsgurt)</legend>
+  <label><input type="checkbox" id="useacc" checked> Polar H10: Beschleunigung aufzeichnen (Atmung und Bewegung)</label>
+  <label>Abtastrate Beschleunigung: <select id="accrate"><option value="25">25 Hz</option><option value="50" selected>50 Hz</option><option value="100">100 Hz</option><option value="200">200 Hz</option></select></label>
+  <label><input type="checkbox" id="useecg"> Polar H10: Roh-EKG aufzeichnen (130 Hz, große Datenmenge)</label>
+  <button class="main" id="hrconnect">Gurt verbinden</button>
+  <button id="hrstop" disabled>Aufzeichnung beenden</button>
+  <div id="hrstatus" class="stat"></div>
+  <div id="pmdstatus" class="stat"></div>
+  <div class="hint">Die Hersteller-App vorher schließen. Der Gurt kann nur mit einer App gleichzeitig verbunden sein. Beim eSense werden die Polar-Optionen einfach übergangen.</div>
+</fieldset>
+
+<fieldset>
+  <legend>1. Klangumgebung (Mikrofon)</legend>
+  <div class="hint">Es wird kein Ton gespeichert. Der Player berechnet nur Kennzahlen pro Sekunde (Lautstärke, Klangfarbe, Rhythmus, Tonart) und erkennt plötzliche Geräusche wie Hupen oder Knallen.</div>
+  <label>Mikrofon: <select id="micdev"><option value="">Standard</option></select></label>
+  <button class="main" id="micstart">Mikrofon starten</button>
+  <button id="micstop" disabled>Mikrofon stoppen</button>
+  <button class="tog" id="phones">Kopfhörer: ab</button>
+  <label><input type="checkbox" id="tapown"> Auch die eigene Musik des Players auswerten (ab dem nächsten Start)</label>
+  <div class="live">
+    <span>Pegel</span><span id="lv">–</span>
+    <span>Bass / Mitte / Höhe</span><span id="bands">–</span>
+    <span>Rhythmus</span><span id="tempo">–</span>
+    <span>Tonart</span><span id="key">–</span>
+    <span>Art (grob)</span><span id="cls">–</span>
+    <span>Letztes Ereignis</span><span id="evt">–</span>
+    <span>Atmung (Gurt)</span><span id="breath">–</span>
+  </div>
+  <div class="hint">Mit Bluetooth-Kopfhörern schaltet Android manchmal auf das Headset-Mikrofon um, dann klingt die Musik dumpf wie am Telefon. In dem Fall oben das eingebaute Mikrofon wählen.</div>
+</fieldset>
+
+<fieldset>
+  <legend>2. Musikdateien wählen</legend>
+  <input type="file" id="files" multiple accept="audio/*">
+  <div class="hint">Lassen sich nicht alle auf einmal markieren, wähle sie einzeln nacheinander. Der Player sammelt sie.</div>
+  <div id="filecheck"></div>
+</fieldset>
+
+<fieldset>
+  <legend>3. Einstellungen</legend>
+  <label>Beginnen bei Block Nr.: <input type="number" id="block" min="1" value="1" step="1">
+    <span class="err" id="blockerr"></span></label>
+  <label><input type="checkbox" id="silence"> Stille als sechstes „Stück“ einmischen (3 Minuten, als Vergleich ohne Musik)</label>
+  <div id="order" class="hint"></div>
+</fieldset>
+
+<button class="main" id="start" disabled>Musik starten</button>
+<button id="stop" disabled>Musik stoppen</button>
+<button class="main" id="resume" style="display:none">Weiter</button>
+<button id="blackbtn">Schwarzsperre</button>
+
+<div id="now"></div>
+<div id="sub"></div>
+
+<fieldset>
+  <legend>4. Was tust du gerade? (antippen, wenn sich die Tätigkeit ändert)</legend>
+  <div id="acts"></div>
+  <input type="text" id="note" placeholder="Eigene Notiz, z. B. Kaffee getrunken"> <button id="addnote">Notiz</button>
+</fieldset>
+
+<fieldset id="review" style="display:none">
+  <legend>5. Nachbefragung: Wie hat jedes Stück gewirkt?</legend>
+  <div class="hint">Nach der Sitzung in Ruhe ausfüllen. Ein Tipp pro Stück genügt, ändern geht jederzeit.</div>
+  <div id="reviewlist"></div>
+</fieldset>
+
+<fieldset>
+  <legend>6. Daten speichern</legend>
+  <button class="main" id="saveall">Alles speichern (ZIP)</button>
+  <button id="clear">Gespeicherte Daten löschen</button>
+  <div id="savestatus" class="hint">Speichert eine ZIP-Datei in die Downloads. Diese Datei unverändert an Claude schicken.</div>
+</fieldset>
+
+<div id="logwrap"><table id="log"><thead><tr><th>Typ</th><th>Block</th><th>Bezeichnung</th><th>Start</th><th>Ende</th></tr></thead><tbody></tbody></table></div>
+
+<div id="blackout"><div id="unlockq">Entsperren?<br><button id="unlockyes">Ja</button><button id="unlockno">Nein</button></div></div>
+
+<script>
+const PIECES = [
+  { key: "raiz",  name: "Raíz Negra",           match: /raiz|raíz/i },
+  { key: "tamb",  name: "Tamborins",            match: /tamb/i },
+  { key: "copp",  name: "Coppélia",             match: /copp/i },
+  { key: "lotus", name: "Blue Lotus",           match: /lotus/i },
+  { key: "cav",   name: "Cavalleria Rusticana", match: /cavall/i }
+];
+const SILENCE = { key: "silence", name: "Stille" };
+const ACTIVITIES = ["Sitzen ruhig", "Arbeiten am Schreibtisch", "Stehen", "Gehen", "Radfahren", "Autofahren", "Hausarbeit", "Kochen/Essen", "Gespräch", "Sport", "Liegen/Ruhen", "Pause/Unterbrechung"];
+const FEEL = ["Blick weit", "Antrieb", "Nach innen", "Ruhig", "Neutral"];
+
+const $ = id => document.getElementById(id);
+const pad = (n, l = 2) => String(n).padStart(l, "0");
+const stamp = d => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+const dstamp = d => `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+const idstamp = d => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+const num = (x, d = 1) => (x === null || x === undefined || !Number.isFinite(x)) ? "" : x.toFixed(d).replace(".", ",");
+const hms = s => `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(Math.floor(s % 60))}`;
+
+/* ================= Speicher (IndexedDB, nur anhängen) ================= */
+let db = null, queue = [], counts = { log: 0, beat: 0, acc: 0, ecg: 0, snd: 0, evt: 0 };
+function openDb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open("messplayer2", 1);
+    r.onupgradeneeded = () => { const s = r.result.createObjectStore("rec", { autoIncrement: true }); s.createIndex("k", "k"); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+function put(k, d) { queue.push({ k, d }); counts[k] = (counts[k] || 0) + 1; }
+function flush() {
+  if (!db || !queue.length) return Promise.resolve();
+  const batch = queue; queue = [];
+  return new Promise(res => {
+    const tx = db.transaction("rec", "readwrite"), s = tx.objectStore("rec");
+    batch.forEach(x => s.add(x));
+    tx.oncomplete = () => res();
+    tx.onerror = () => { queue = batch.concat(queue); res(); };
+  });
+}
+setInterval(flush, 3000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+window.addEventListener("pagehide", flush);
+function readKind(k) {
+  return new Promise(res => {
+    const out = [], r = db.transaction("rec").objectStore("rec").index("k").openCursor(IDBKeyRange.only(k));
+    r.onsuccess = () => { const c = r.result; if (c) { out.push(c.value.d); c.continue(); } else res(out); };
+    r.onerror = () => res(out);
+  });
+}
+function countKind(k) {
+  return new Promise(res => { const r = db.transaction("rec").objectStore("rec").index("k").count(IDBKeyRange.only(k)); r.onsuccess = () => res(r.result); r.onerror = () => res(0); });
+}
+async function memStatus() {
+  let t = `Gerät: ${counts.log} Einträge, ${counts.beat} Herzschläge, ${counts.snd} s Klang, ${counts.evt} Geräusche, ${counts.acc} ACC-Pakete` + (counts.ecg ? `, ${counts.ecg} EKG-Pakete` : "");
+  try { const e = await navigator.storage.estimate(); t += ` · belegt ${(e.usage / 1e6).toFixed(1)} von ${(e.quota / 1e6).toFixed(0)} MB`; } catch (e) {}
+  $("mem").textContent = t;
+}
+setInterval(memStatus, 10000);
+
+/* ================= Protokoll ================= */
+let log = [];
+function row(r) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td>${r.typ}</td><td>${r.block ?? ""}</td><td>${r.name}</td><td>${stamp(new Date(r.start))}</td><td>${r.end ? stamp(new Date(r.end)) : ""}</td>`;
+  const tb = $("log").querySelector("tbody"); tb.insertBefore(tr, tb.firstChild);
+  while (tb.children.length > 300) tb.removeChild(tb.lastChild);
+}
+function addEntry(r) { if (!r.session) r.session = sessionId || hrRec || micRec || ""; log.push(r); row(r); put("log", r); }
+
+/* ================= Wachhalten ================= */
+let wakeLock = null;
+function needAwake() { return running || hrWanted || micOn; }
+async function keepAwake() {
+  if (wakeLock && !wakeLock.released) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wlShow(); if (needAwake()) addEntry({ typ: "Bildschirm", name: "Wachhalten verloren", start: Date.now() }); });
+  } catch (e) {}
+  wlShow();
+}
+function wlShow() {
+  const el = $("wl");
+  if (!needAwake()) { el.className = ""; el.textContent = "Bildschirm: nicht nötig"; return; }
+  if (wakeLock && !wakeLock.released) { el.className = "good"; el.textContent = "✓ Bildschirm bleibt an"; }
+  else { el.className = "bad"; el.textContent = "⚠ Bildschirm kann ausgehen, Seite antippen"; }
+}
+setInterval(() => { if (needAwake() && document.visibilityState === "visible") keepAwake(); wlShow(); }, 5000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && needAwake()) keepAwake(); });
+document.addEventListener("pointerdown", () => { if (needAwake()) keepAwake(); });
+
+let recStart = null;
+setInterval(() => {
+  $("dur").textContent = recStart && needAwake() ? "Aufzeichnung läuft seit " + hms((Date.now() - recStart) / 1000) : "keine Aufzeichnung";
+}, 1000);
+function markRec() { if (!recStart) recStart = Date.now(); }
+
+/* ================= Musik ================= */
+function williams(n) {
+  const base = [0]; let lo = 1, hi = n - 1;
+  for (let k = 1; k < n; k++) base.push(k % 2 ? lo++ : hi--);
+  const rows = [];
+  for (let i = 0; i < n; i++) rows.push(base.map(v => (v + i) % n));
+  if (n % 2) for (let i = 0; i < n; i++) rows.push([...rows[i]].reverse());
+  return rows;
+}
+const urls = {};
+let running = false, audio = new Audio(), blockNo = 1, pos = 0, current = null, sessionId = null;
+function items() { return $("silence").checked ? [...PIECES, SILENCE] : PIECES; }
+function orderOf(b) { const o = williams(items().length); return o[(b - 1) % o.length].map(i => items()[i]); }
+function readBlock() {
+  const v = parseInt(String($("block").value).replace(",", "."), 10);
+  if (!Number.isFinite(v) || v < 1) { $("blockerr").textContent = "Bitte eine ganze Zahl ab 1 eingeben."; return null; }
+  $("blockerr").textContent = ""; return v;
+}
+function showOrder() {
+  const b = readBlock(); if (b === null) { $("order").textContent = ""; return; }
+  $("order").textContent = `Block ${b}: ` + orderOf(b).map(p => p.name).join(" → ") + `. Danach geht es endlos mit Block ${b + 1}, ${b + 2} … weiter.`;
+}
+$("block").addEventListener("input", () => { showOrder(); checkReady(); });
+$("silence").addEventListener("change", () => { showOrder(); checkReady(); });
+function silentWav(sec) {
+  const rate = 8000, n = rate * sec, buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+  const w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, "RIFF"); v.setUint32(4, 36 + n, true); w(8, "WAVE"); w(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  w(36, "data"); v.setUint32(40, n, true);
+  for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+  return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+}
+urls.silence = silentWav(180);
+$("files").addEventListener("change", e => {
+  for (const f of e.target.files) { const p = PIECES.find(p => p.match.test(f.name)); if (p) urls[p.key] = URL.createObjectURL(f); }
+  $("filecheck").innerHTML = PIECES.map(p => `<div class="${urls[p.key] ? "ok" : "miss"}">${urls[p.key] ? "✓" : "✗"} ${p.name}</div>`).join("");
+  checkReady(); e.target.value = "";
+});
+function checkReady() { $("start").disabled = running || !PIECES.every(p => urls[p.key]) || readBlock() === null; }
+
+$("acts").innerHTML = ACTIVITIES.map(a => `<button class="act" data-a="${a}">${a}</button>`).join("");
+$("acts").addEventListener("click", e => {
+  const a = e.target.dataset.a; if (!a) return;
+  document.querySelectorAll(".act").forEach(b => b.classList.toggle("on", b.dataset.a === a));
+  addEntry({ typ: "Tätigkeit", name: a, start: Date.now() });
+});
+$("addnote").addEventListener("click", () => {
+  const t = $("note").value.trim(); if (!t) return;
+  addEntry({ typ: "Notiz", name: t, start: Date.now() }); $("note").value = "";
+});
+
+let blockedSince = null;
+function tryPlay() {
+  if (ctx && ctx.state !== "running") ctx.resume().catch(() => {});
+  audio.play().then(() => {
+    if (blockedSince) { addEntry({ typ: "Unterbrechung", block: current ? current.block : "", name: "Wiedergabe angehalten (Gerät/Browser)", start: blockedSince, end: Date.now() }); blockedSince = null; }
+    $("resume").style.display = "none";
+  }).catch(() => {
+    if (!blockedSince) blockedSince = Date.now();
+    $("now").textContent = "Musik angehalten. Bitte auf „Weiter“ tippen.";
+    $("resume").style.display = "inline-block";
+  });
+}
+$("resume").addEventListener("click", tryPlay);
+function next() {
+  if (!running) return;
+  const order = orderOf(blockNo);
+  if (pos >= order.length) { blockNo++; pos = 0; return next(); }
+  const p = order[pos];
+  current = { typ: "Stück", block: blockNo, pos: pos + 1, name: p.name, start: null, end: null };
+  audio.src = urls[p.key]; tryPlay();
+  try { navigator.mediaSession.metadata = new MediaMetadata({ title: p.name, artist: `Block ${blockNo}, Position ${pos + 1}` }); } catch (e) {}
+  $("now").textContent = p.name;
+}
+setInterval(() => { if (running && current && audio.paused && !audio.ended) { if (!blockedSince) blockedSince = Date.now(); tryPlay(); } }, 3000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && running && current && audio.paused) tryPlay(); });
+audio.addEventListener("playing", () => { if (current && !current.start) current.start = Date.now(); if (current) $("now").textContent = current.name; });
+audio.addEventListener("ended", () => {
+  if (!current) return;
+  current.end = Date.now(); if (!current.start) current.start = current.end;
+  addEntry(current); current = null; pos++; next();
+});
+audio.addEventListener("error", () => {
+  if (current) addEntry({ typ: "Fehler", block: current.block, name: "Wiedergabefehler bei " + current.name, start: Date.now() });
+  current = null; pos++; setTimeout(next, 500);
+});
+setInterval(() => {
+  if (!running || !current) return;
+  const left = Math.max(0, Math.round((audio.duration || 0) - audio.currentTime));
+  $("sub").textContent = `Block ${current.block}, Position ${current.pos}  ·  noch ${Math.floor(left / 60)}:${pad(left % 60)}  ·  ${stamp(new Date()).slice(0, 8)}`;
+}, 500);
+
+$("start").addEventListener("click", async () => {
+  const b = readBlock(); if (b === null) return;
+  running = true; blockNo = b; pos = 0; sessionId = idstamp(new Date()); markRec();
+  $("start").disabled = true; $("stop").disabled = false; $("block").disabled = true; $("silence").disabled = true;
+  keepAwake();
+  if ($("tapown").checked) tapOwn();
+  addEntry({ typ: "Start", name: "Musik gestartet ab Block " + b + ($("silence").checked ? " (mit Stille)" : ""), start: Date.now() });
+  next();
+});
+$("stop").addEventListener("click", () => {
+  running = false; audio.pause();
+  if (current && current.start) { current.end = Date.now(); current.name += " (abgebrochen)"; addEntry(current); }
+  current = null;
+  addEntry({ typ: "Stopp", name: `Musik beendet, nächster Block wäre ${blockNo + (pos > 0 ? 1 : 0)}`, start: Date.now() });
+  $("now").textContent = "Musik gestoppt."; $("sub").textContent = "";
+  $("stop").disabled = true; $("block").disabled = false; $("silence").disabled = false;
+  $("block").value = blockNo + (pos > 0 ? 1 : 0); showOrder(); checkReady();
+  sessionId = null; renderReview(); flush();
+});
+
+/* ================= Brustgurt: Herzfrequenz ================= */
+const PMD_SVC = "fb005c80-02e7-f387-1cad-8acd2d8df0c8", PMD_CP = "fb005c81-02e7-f387-1cad-8acd2d8df0c8", PMD_DATA = "fb005c82-02e7-f387-1cad-8acd2d8df0c8";
+let hrDev = null, hrChar = null, hrWanted = false, hrLast = 0, hrRec = null, nBeats = 0;
+function hrStatus(t) { $("hrstatus").textContent = t; }
+function pmdStatus(t) { $("pmdstatus").textContent = t; }
+function onHr(ev) {
+  const v = ev.target.value, now = Date.now(); let o = 1; const flags = v.getUint8(0);
+  const bpm = (flags & 1) ? v.getUint16(1, true) : v.getUint8(1); o += (flags & 1) ? 2 : 1;
+  if (flags & 8) o += 2;
+  const rrs = [];
+  if (flags & 16) for (; o + 1 < v.byteLength; o += 2) rrs.push(v.getUint16(o, true) * 1000 / 1024);
+  let t = now; const fresh = [];
+  for (let i = rrs.length - 1; i >= 0; i--) { fresh.unshift([Math.round(t), Math.round(rrs[i]), hrRec]); t -= rrs[i]; }
+  fresh.forEach(b => put("beat", b)); nBeats += fresh.length;
+  hrLast = now;
+  hrStatus(`Verbunden · Puls ${bpm} · ${nBeats} Herzschläge in dieser Aufzeichnung`);
+}
+setInterval(() => {
+  if (hrWanted && hrLast && Date.now() - hrLast > 10000) hrStatus("Kein Signal seit " + Math.round((Date.now() - hrLast) / 1000) + " s. Gurt anfeuchten, Bildschirm anlassen.");
+}, 5000);
+
+/* ================= Brustgurt: Polar PMD (Beschleunigung, EKG) ================= */
+let pmdCp = null, pmdData = null, pmdOn = false, pmdLast = 0, accN = 0, ecgN = 0, pmdWarned = {};
+const breathBuf = [];   // [t, x, y, z] auf ca. 10 Hz verdichtet
+let accAgg = null;
+function i24(dv, o) { const v = dv.getUint8(o) | (dv.getUint8(o + 1) << 8) | (dv.getUint8(o + 2) << 16); return v & 0x800000 ? v - 0x1000000 : v; }
+function onPmd(ev) {
+  const v = ev.target.value, now = Date.now();
+  if (v.byteLength < 10) return;
+  const type = v.getUint8(0), tsNs = v.getBigUint64(1, true), ft = v.getUint8(9), tsUs = Number(tsNs / 1000n);
+  pmdLast = now;
+  if (type === 2) {
+    const rate = +$("accrate").value, out = [];
+    if (ft === 0) for (let o = 10; o + 2 < v.byteLength; o += 3) out.push(v.getInt8(o), v.getInt8(o + 1), v.getInt8(o + 2));
+    else if (ft === 1) for (let o = 10; o + 5 < v.byteLength; o += 6) out.push(v.getInt16(o, true), v.getInt16(o + 2, true), v.getInt16(o + 4, true));
+    else if (ft === 2) for (let o = 10; o + 8 < v.byteLength; o += 9) out.push(i24(v, o), i24(v, o + 3), i24(v, o + 6));
+    else { if (!pmdWarned["a" + ft]) { pmdWarned["a" + ft] = 1; addEntry({ typ: "Gurt", name: "Unbekanntes ACC-Format " + ft, start: now }); } return; }
+    put("acc", { t: now, us: tsUs, r: rate, s: hrRec, v: out }); accN += out.length / 3;
+    const n = out.length / 3, dt = 1000 / rate;
+    for (let i = 0; i < n; i++) {
+      const ti = now - (n - 1 - i) * dt;
+      if (!accAgg) accAgg = { t0: ti, n: 0, x: 0, y: 0, z: 0 };
+      accAgg.n++; accAgg.x += out[3 * i]; accAgg.y += out[3 * i + 1]; accAgg.z += out[3 * i + 2];
+      if (ti - accAgg.t0 >= 100) { breathBuf.push([ti, accAgg.x / accAgg.n, accAgg.y / accAgg.n, accAgg.z / accAgg.n]); accAgg = null; }
+    }
+    while (breathBuf.length && now - breathBuf[0][0] > 90000) breathBuf.shift();
+  } else if (type === 0) {
+    const out = [];
+    if (ft === 0) for (let o = 10; o + 2 < v.byteLength; o += 3) out.push(i24(v, o));
+    else { if (!pmdWarned["e" + ft]) { pmdWarned["e" + ft] = 1; addEntry({ typ: "Gurt", name: "Unbekanntes EKG-Format " + ft, start: now }); } return; }
+    put("ecg", { t: now, us: tsUs, r: 130, s: hrRec, v: out }); ecgN += out.length;
+  }
+}
+function onPmdCp(ev) {
+  const v = ev.target.value;
+  if (v.getUint8(0) === 0xF0 && v.byteLength >= 4) {
+    const what = { 0: "EKG", 2: "Beschleunigung" }[v.getUint8(2)] || ("Typ " + v.getUint8(2)), st = v.getUint8(3);
+    if (v.getUint8(1) === 2) addEntry({ typ: "Gurt", name: what + (st === 0 ? " gestartet" : " Start abgelehnt (Code " + st + ")"), start: Date.now() });
+  }
+}
+async function pmdAttach(server) {
+  pmdOn = false;
+  if (!$("useacc").checked && !$("useecg").checked) { pmdStatus(""); return; }
+  try {
+    const svc = await server.getPrimaryService(PMD_SVC);
+    pmdCp = await svc.getCharacteristic(PMD_CP); pmdData = await svc.getCharacteristic(PMD_DATA);
+  } catch (e) { pmdStatus("Kein Polar-Datenkanal (normal beim eSense). Nur Herzschläge."); return; }
+  pmdCp.addEventListener("characteristicvaluechanged", onPmdCp);
+  pmdData.addEventListener("characteristicvaluechanged", onPmd);
+  await pmdCp.startNotifications();
+  await pmdData.startNotifications();
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  if ($("useacc").checked) {
+    const r = +$("accrate").value;
+    await pmdCp.writeValueWithResponse(new Uint8Array([0x02, 0x02, 0x00, 0x01, r & 255, r >> 8, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x04, 0x00]));
+    await wait(400);
+  }
+  if ($("useecg").checked) {
+    await pmdCp.writeValueWithResponse(new Uint8Array([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00]));
+    await wait(400);
+  }
+  pmdOn = true;
+}
+setInterval(() => {
+  if (!hrWanted || !pmdOn) return;
+  const age = pmdLast ? Math.round((Date.now() - pmdLast) / 1000) : null;
+  pmdStatus((age !== null && age > 5 ? `Polar-Daten: keine seit ${age} s · ` : "Polar-Daten laufen · ") +
+    `${Math.round(accN)} Beschleunigungswerte` + (ecgN ? ` · ${ecgN} EKG-Werte` : ""));
+}, 2000);
+
+/* Atmung und Bewegung grob aus der Brustbewegung */
+function movAvg(a, w) { const o = new Array(a.length); let s = 0; for (let i = 0; i < a.length; i++) { s += a[i]; if (i >= w) s -= a[i - w]; o[i] = s / Math.min(i + 1, w); } return o; }
+setInterval(() => {
+  if (breathBuf.length < 300) { if (pmdOn) $("breath").textContent = "sammle Daten …"; return; }
+  const seg = breathBuf.slice(-600), dur = (seg[seg.length - 1][0] - seg[0][0]) / 1000;
+  let best = null;
+  for (let ax = 1; ax <= 3; ax++) {
+    const raw = seg.map(r => r[ax]), sm = movAvg(raw, 5), slow = movAvg(raw, 80);
+    const d = sm.map((v, i) => v - slow[i]).slice(80);
+    const m = d.reduce((a, b) => a + b, 0) / d.length, sd = Math.sqrt(d.reduce((a, b) => a + (b - m) ** 2, 0) / d.length);
+    if (!best || sd > best.sd) best = { d, sd };
+  }
+  const h = 0.3 * best.sd; let state = 0, cross = 0;
+  best.d.forEach(v => { if (state <= 0 && v > h) { state = 1; cross++; } else if (state >= 0 && v < -h) state = -1; });
+  const mins = (best.d.length * 0.1) / 60, rate = cross / mins;
+  const mag = seg.slice(-100).map(r => Math.hypot(r[1], r[2], r[3])), mm = mag.reduce((a, b) => a + b, 0) / mag.length;
+  const msd = Math.sqrt(mag.reduce((a, b) => a + (b - mm) ** 2, 0) / mag.length);
+  const mov = msd < 15 ? "ruhig" : msd < 60 ? "leichte Bewegung" : "starke Bewegung";
+  $("breath").textContent = (mov === "ruhig" ? `ca. ${rate.toFixed(1)} Atemzüge/min` : "bei Bewegung nicht schätzbar") + ` · ${mov} (grob, ${Math.round(dur)} s)`;
+}, 5000);
+
+async function hrAttach() {
+  const server = await hrDev.gatt.connect();
+  const svc = await server.getPrimaryService("heart_rate");
+  hrChar = await svc.getCharacteristic("heart_rate_measurement");
+  hrChar.removeEventListener("characteristicvaluechanged", onHr);
+  hrChar.addEventListener("characteristicvaluechanged", onHr);
+  await hrChar.startNotifications();
+  try { await pmdAttach(server); } catch (e) { pmdStatus("Polar-Daten nicht gestartet: " + (e.message || e)); }
+}
+$("hrconnect").addEventListener("click", async () => {
+  if (!navigator.bluetooth) { hrStatus("Bluetooth ist in diesem Browser nicht verfügbar. Bitte Chrome verwenden und Bluetooth einschalten."); return; }
+  try {
+    hrDev = await navigator.bluetooth.requestDevice({ filters: [{ services: ["heart_rate"] }], optionalServices: [PMD_SVC] });
+    hrDev.addEventListener("gattserverdisconnected", async () => {
+      if (!hrWanted) return;
+      hrStatus("Verbindung verloren, verbinde neu …"); pmdOn = false;
+      addEntry({ typ: "Gurt", name: "Verbindung verloren", start: Date.now() });
+      for (let i = 0; i < 20 && hrWanted; i++) {
+        try { await hrAttach(); addEntry({ typ: "Gurt", name: "Wieder verbunden", start: Date.now() }); return; }
+        catch (e) { await new Promise(r => setTimeout(r, 3000)); }
+      }
+      hrStatus("Neu verbinden fehlgeschlagen. Bitte erneut „Gurt verbinden“ tippen.");
+    });
+    if (!hrRec) { hrRec = idstamp(new Date()); nBeats = 0; accN = 0; ecgN = 0; }
+    await hrAttach();
+    hrWanted = true; markRec(); keepAwake();
+    addEntry({ typ: "Gurt", name: "Aufzeichnung gestartet: " + (hrDev.name || "Gurt"), start: Date.now(), session: hrRec });
+    $("hrstop").disabled = false; $("hrconnect").textContent = "Neu verbinden";
+    $("useacc").disabled = $("useecg").disabled = $("accrate").disabled = true;
+    hrStatus("Verbunden mit " + (hrDev.name || "Gurt") + ". Warte auf Herzschläge …");
+  } catch (e) { hrStatus("Verbindung nicht möglich: " + (e && e.message ? e.message : e)); }
+});
+$("hrstop").addEventListener("click", async () => {
+  hrWanted = false; pmdOn = false;
+  try { if (pmdCp) { await pmdCp.writeValueWithResponse(new Uint8Array([0x03, 0x02])); await pmdCp.writeValueWithResponse(new Uint8Array([0x03, 0x00])); } } catch (e) {}
+  try { await hrChar?.stopNotifications(); } catch (e) {}
+  try { hrDev?.gatt.disconnect(); } catch (e) {}
+  addEntry({ typ: "Gurt", name: `Aufzeichnung beendet, ${nBeats} Herzschläge, ${Math.round(accN)} Beschleunigungswerte`, start: Date.now(), session: hrRec });
+  hrStatus("Beendet. Bitte „Alles speichern“ tippen."); pmdStatus("");
+  hrRec = null; $("hrstop").disabled = true; $("hrconnect").textContent = "Gurt verbinden";
+  $("useacc").disabled = $("useecg").disabled = $("accrate").disabled = false;
+  flush();
+});
+
+/* ================= Klang: Mikrofon und eigene Musik ================= */
+let ctx = null, micStream = null, micOn = false, micRec = null, phones = false, trackers = [], ownTapped = false, loopT = null;
+function ensureCtx() { if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); if (ctx.state !== "running") ctx.resume().catch(() => {}); return ctx; }
+const NAMES = ["C", "Cis", "D", "Es", "E", "F", "Fis", "G", "As", "A", "B", "H"];
+const MAJ = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+const MIN = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+function corr(a, b) {
+  const ma = a.reduce((s, v) => s + v, 0) / 12, mb = b.reduce((s, v) => s + v, 0) / 12;
+  let n = 0, da = 0, dbb = 0;
+  for (let i = 0; i < 12; i++) { n += (a[i] - ma) * (b[i] - mb); da += (a[i] - ma) ** 2; dbb += (b[i] - mb) ** 2; }
+  return n / Math.sqrt(da * dbb + 1e-12);
+}
+function pct(arr, p) { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
+const dB = p => 10 * Math.log10(p + 1e-20);
+
+class Tracker {
+  constructor(src, an, detect) {
+    this.src = src; this.an = an; this.detect = detect;
+    this.n = an.frequencyBinCount; this.fd = new Float32Array(this.n); this.td = new Float32Array(an.fftSize);
+    this.prev = new Float32Array(this.n); this.hz = ctx.sampleRate / an.fftSize;
+    this.pc = new Int8Array(this.n).fill(-1);
+    for (let k = 1; k < this.n; k++) { const f = k * this.hz; if (f >= 80 && f <= 5000) this.pc[k] = ((Math.round(12 * Math.log2(f / 440)) + 9) % 12 + 12) % 12; }
+    this.flux = []; this.frames = []; this.chroma = new Float32Array(12); this.lastDb = -120; this.lastOn = 0;
+    this.evt = null; this.bgMin = null; this.loud = null; this.loudRun = 0; this.quietRun = 0; this.t0 = Date.now();
+    this.sec = null; this.agg = null; this.bg = null; this.last = null;
+  }
+  step(now) {
+    const an = this.an, fd = this.fd, td = this.td;
+    an.getFloatTimeDomainData(td); an.getFloatFrequencyData(fd);
+    let e = 0; for (let i = 0; i < td.length; i++) e += td[i] * td[i];
+    const lev = dB(e / td.length);
+    let B = 0, M = 0, H = 0, sp = 0, sfp = 0, lg = 0, cnt = 0, fl = 0, pk = 0, pkf = 0; const ch = new Float32Array(12);
+    for (let k = 1; k < this.n; k++) {
+      const f = k * this.hz; if (f > 8000) break;
+      const p = Math.pow(10, fd[k] / 10), mag = Math.sqrt(p);
+      if (f < 250) B += p; else if (f < 2000) M += p; else H += p;
+      if (f >= 60) { sp += p; sfp += f * p; lg += Math.log(p + 1e-20); cnt++; }
+      if (f >= 100 && f <= 5000 && p > pk) { pk = p; pkf = f; }
+      const d = mag - this.prev[k]; if (d > 0) fl += d; this.prev[k] = mag;
+      if (this.pc[k] >= 0) ch[this.pc[k]] += mag;
+    }
+    const flat = cnt ? Math.exp(lg / cnt) / (sp / cnt + 1e-20) : 0, cen = sp ? sfp / sp : 0;
+    this.flux.push(fl); this.frames.push([now, lev]);
+    while (this.frames.length && now - this.frames[0][0] > 30000) this.frames.shift();
+    while (this.flux.length > 400) this.flux.shift();
+    // Einsatz (Onset)
+    const L = this.flux.length; let onset = false;
+    if (L > 40) {
+      const recent = this.flux.slice(-120), thr = 1.5 * pct(recent, 0.5) + 1e-9, a = this.flux[L - 3], b = this.flux[L - 2], c = this.flux[L - 1];
+      if (b > thr && b > a && b >= c && now - this.lastOn > 100 && lev > -70) { onset = true; this.lastOn = now; }
+    }
+    // Tonart-Gedächtnis (ca. 15 s)
+    if (lev > -60) { const s = ch.reduce((x, y) => x + y, 0) + 1e-12; for (let i = 0; i < 12; i++) this.chroma[i] = this.chroma[i] * 0.9983 + ch[i] / s; }
+    // Sekunde sammeln
+    const sec = Math.floor(now / 1000);
+    if (this.sec !== null && sec !== this.sec) this.closeSecond();
+    if (this.sec !== sec) { this.sec = sec; this.agg = { n: 0, e: 0, max: -200, B: 0, M: 0, H: 0, cen: 0, flat: 0, on: 0, levs: [] }; }
+    const g = this.agg; g.n++; g.e += e / td.length; g.max = Math.max(g.max, lev); g.B += B; g.M += M; g.H += H; g.cen += cen; g.flat += flat; if (onset) g.on++; g.levs.push(lev);
+    // Plötzliche Geräusche
+    if (this.detect && this.bg !== null && now - this.t0 > 10000) {
+      if (!this.evt && lev > this.bg + 12) this.evt = { t: now, max: lev, rise: lev - this.lastDb, flat: 0, cen: 0, pkf: 0, n: 0, below: 0, bg: this.bg };
+      if (this.evt) {
+        const v = this.evt; v.n++; v.max = Math.max(v.max, lev); v.flat += flat; v.cen += cen; if (lev >= v.max) v.pkf = pkf;
+        v.below = lev < v.bg + 6 ? v.below + 1 : 0;
+        if (v.below >= 3 || now - v.t > 10000) this.endEvent(now);
+      }
+    }
+    this.lastDb = lev;
+  }
+  endEvent(now) {
+    const v = this.evt; this.evt = null;
+    const dur = Math.max(0.025, (now - v.t) / 1000 - v.below * 0.025), flat = v.flat / v.n, cen = v.cen / v.n;
+    let cls = "Sonstiges";
+    const inMusic = this.last && this.last.cls === "Musik";
+    if (dur < 0.35 && v.rise > 12 && flat > 0.2) cls = "Knall";
+    else if (inMusic && dur < 0.5) cls = "Musik-Einsatz";
+    else if (dur >= 0.3 && flat < 0.12 && v.pkf >= 250 && v.pkf <= 3500) cls = "Hupe/Ton";
+    else if (dur >= 0.2 && dur <= 3 && cen >= 300 && cen <= 3000) cls = "Ruf/Stimme";
+    const r = { t: v.t, s: micRec, src: this.src, dur, max: v.max, bg: v.bg, ueber: v.max - v.bg, rise: v.rise, flat, cen, pkf: v.pkf, cls, ph: phones };
+    put("evt", r);
+    if (cls === "Musik-Einsatz") return;
+    $("evt").textContent = `${stamp(new Date(v.t)).slice(0, 8)} ${cls}, ${(v.max - v.bg).toFixed(0)} dB über Hintergrund, ${dur.toFixed(1)} s`;
+  }
+  closeSecond() {
+    const g = this.agg; if (!g || !g.n) return;
+    const lev = dB(g.e / g.n), m = g.levs.reduce((a, b) => a + b, 0) / g.n, sd = Math.sqrt(g.levs.reduce((a, b) => a + (b - m) ** 2, 0) / g.n);
+    const now = this.sec * 1000;
+    this.bg = pct(this.frames.map(f => f[1]), 0.2);
+    // Tempo aus den letzten 8 s
+    let bpm = null, tstr = 0;
+    const fx = this.flux.slice(-320);
+    if (fx.length >= 240) {
+      const mu = fx.reduce((a, b) => a + b, 0) / fx.length, x = fx.map(v => v - mu);
+      const r0 = x.reduce((a, b) => a + b * b, 0) + 1e-12, dt = 0.025, ac = [];
+      const lo = Math.round(60 / 190 / dt), hi = Math.round(60 / 55 / dt);
+      for (let lag = lo - 1; lag <= hi + 1; lag++) { let s = 0; for (let i = lag; i < x.length; i++) s += x[i] * x[i - lag]; ac[lag] = s / r0; }
+      let bl = lo; for (let lag = lo; lag <= hi; lag++) if (ac[lag] > ac[bl]) bl = lag;
+      const a = ac[bl - 1], b = ac[bl], c = ac[bl + 1], den = a - 2 * b + c, off = den ? 0.5 * (a - c) / den : 0;
+      bpm = 60 / ((bl + Math.max(-0.5, Math.min(0.5, off))) * dt); tstr = b;
+    }
+    // Tonart
+    let key = "", kstr = 0;
+    const cs = this.chroma.reduce((a, b) => a + b, 0);
+    if (cs > 5) {
+      const c = Array.from(this.chroma);
+      for (let i = 0; i < 12; i++) {
+        const rot = c.slice(i).concat(c.slice(0, i)), rM = corr(rot, MAJ), rm = corr(rot, MIN);
+        if (rM > kstr) { kstr = rM; key = NAMES[i] + "-Dur"; }
+        if (rm > kstr) { kstr = rm; key = NAMES[i].toLowerCase() + "-Moll"; }
+      }
+    }
+    const flat = g.flat / g.n, cen = g.cen / g.n;
+    let cls = "gemischt";
+    if (lev < -65) cls = "Ruhe";
+    else if (tstr > 0.3 || (kstr > 0.75 && sd < 4)) cls = "Musik";
+    else if (sd > 5 && cen > 300 && cen < 3500 && flat < 0.35) cls = "Sprache";
+    else if (flat > 0.3) cls = "Rauschen/Lärm";
+    const r = { t: now, s: micRec || sessionId, src: this.src, lev, max: g.max, bg: this.bg, B: dB(g.B / g.n), M: dB(g.M / g.n), H: dB(g.H / g.n), cen, flat, on: g.on, bpm, tstr, key, kstr, cls, ph: phones };
+    put("snd", r); this.last = r;
+    if (this.detect) this.noise(now);
+  }
+  noise(now) {
+    if (this.bg === null || now - this.t0 < 30000) return;
+    this.bgMin = this.bgMin === null ? this.bg : Math.min(this.bgMin, this.bg);
+    if (!this.loud) {
+      this.loudRun = this.bg > this.bgMin + 10 ? this.loudRun + 1 : 0;
+      if (this.loudRun >= 30) { this.loud = { t: now - 30000, max: this.bg }; addEntry({ typ: "Dauerlärm", name: `Beginn, Hintergrund ${(this.bg - this.bgMin).toFixed(0)} dB über dem Ruhepegel`, start: this.loud.t }); }
+    } else {
+      this.loud.max = Math.max(this.loud.max, this.bg);
+      this.quietRun = this.bg < this.bgMin + 7 ? this.quietRun + 1 : 0;
+      if (this.quietRun >= 10) { addEntry({ typ: "Dauerlärm", name: `Ende, höchstens ${(this.loud.max - this.bgMin).toFixed(0)} dB über dem Ruhepegel`, start: this.loud.t, end: now - 10000 }); this.loud = null; this.quietRun = 0; this.loudRun = 0; }
+    }
+  }
+}
+function mkAnalyser() { const an = ctx.createAnalyser(); an.fftSize = 4096; an.smoothingTimeConstant = 0; return an; }
+function startLoop() {
+  if (loopT) return;
+  loopT = setInterval(() => { const now = Date.now(); trackers.forEach(t => { try { t.step(now); } catch (e) {} }); }, 25);
+}
+setInterval(() => {
+  const m = trackers.find(t => t.src === "Mikro") || trackers[0]; if (!m || !m.last) return;
+  const r = m.last, tag = trackers.length > 1 ? ` (${m.src})` : "";
+  $("lv").textContent = `${r.lev.toFixed(0)} dBFS · Hintergrund ${r.bg !== null ? r.bg.toFixed(0) : "–"} dBFS${tag}`;
+  $("bands").textContent = `${r.B.toFixed(0)} / ${r.M.toFixed(0)} / ${r.H.toFixed(0)} dB · Schwerpunkt ${Math.round(r.cen)} Hz`;
+  $("tempo").textContent = r.bpm ? `ca. ${Math.round(r.bpm)} Schläge/min (Deutlichkeit ${r.tstr.toFixed(2)}) · ${r.on} Einsätze/s` : "sammle Daten …";
+  $("key").textContent = r.key ? `${r.key} (Deutlichkeit ${r.kstr.toFixed(2)})` : "–";
+  $("cls").textContent = r.cls;
+}, 1000);
+
+async function listMics() {
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "audioinput");
+    const sel = $("micdev"), cur = sel.value;
+    sel.innerHTML = `<option value="">Standard</option>` + devs.filter(d => d.deviceId && d.deviceId !== "default").map(d => `<option value="${d.deviceId}">${d.label || "Mikrofon"}</option>`).join("");
+    sel.value = cur;
+  } catch (e) {}
+}
+navigator.mediaDevices?.addEventListener?.("devicechange", () => { listMics(); if (micOn || running) addEntry({ typ: "Audiogerät", name: "Audiogeräte geändert (Kopfhörer verbunden oder getrennt?)", start: Date.now() }); });
+$("micstart").addEventListener("click", async () => {
+  try {
+    ensureCtx();
+    const id = $("micdev").value;
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: id ? { exact: id } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    const src = ctx.createMediaStreamSource(micStream), an = mkAnalyser(); src.connect(an);
+    if (!micRec) micRec = idstamp(new Date());
+    trackers = trackers.filter(t => t.src !== "Mikro"); trackers.push(new Tracker("Mikro", an, true));
+    micOn = true; markRec(); keepAwake(); startLoop(); listMics();
+    const lab = micStream.getAudioTracks()[0]?.label || "Mikrofon";
+    addEntry({ typ: "Mikrofon", name: "Klangaufzeichnung gestartet: " + lab + (phones ? " (Kopfhörer auf)" : ""), start: Date.now(), session: micRec });
+    $("micstart").disabled = true; $("micstop").disabled = false; $("micdev").disabled = true;
+  } catch (e) { $("cls").textContent = "Mikrofon nicht möglich: " + (e.message || e); }
+});
+$("micstop").addEventListener("click", () => {
+  micStream?.getTracks().forEach(t => t.stop()); micStream = null;
+  trackers = trackers.filter(t => t.src !== "Mikro"); micOn = false;
+  addEntry({ typ: "Mikrofon", name: "Klangaufzeichnung beendet", start: Date.now(), session: micRec });
+  micRec = null; $("micstart").disabled = false; $("micstop").disabled = true; $("micdev").disabled = false; flush();
+});
+$("phones").addEventListener("click", () => {
+  phones = !phones; $("phones").classList.toggle("on", phones); $("phones").textContent = "Kopfhörer: " + (phones ? "auf" : "ab");
+  addEntry({ typ: "Kopfhörer", name: phones ? "auf" : "ab", start: Date.now() });
+});
+function tapOwn() {
+  if (ownTapped) return;
+  try {
+    ensureCtx();
+    const src = ctx.createMediaElementSource(audio), an = mkAnalyser();
+    src.connect(ctx.destination); src.connect(an);
+    trackers.push(new Tracker("Player", an, false)); ownTapped = true; startLoop();
+    addEntry({ typ: "Klang", name: "Eigene Musik wird mit ausgewertet", start: Date.now() });
+  } catch (e) { addEntry({ typ: "Fehler", name: "Eigene Musik nicht auswertbar: " + (e.message || e), start: Date.now() }); }
+}
+
+/* ================= Nachbefragung und Taste ================= */
+function lastMusicSession() { for (let i = log.length - 1; i >= 0; i--) if (log[i].typ === "Stück") return log[i].session; return null; }
+function renderReview() {
+  const sid = lastMusicSession();
+  const pieces = log.filter(r => r.session === sid && r.typ === "Stück");
+  if (!sid || !pieces.length) { $("review").style.display = "none"; return; }
+  const chosen = {};
+  log.filter(r => r.session === sid && r.typ === "Erleben").forEach(r => { chosen[r.ref] = r.feel; });
+  $("reviewlist").innerHTML = pieces.map(p => {
+    const ref = p.block + "-" + p.pos;
+    return `<div class="rv"><b>${stamp(new Date(p.start)).slice(0, 5)} · ${p.name}</b><br>` +
+      FEEL.map(f => `<button data-ref="${ref}" data-f="${f}" class="${chosen[ref] === f ? "on" : ""}">${f}</button>`).join("") + `</div>`;
+  }).join("");
+  $("review").style.display = "block";
+}
+$("reviewlist").addEventListener("click", e => {
+  const ref = e.target.dataset.ref, f = e.target.dataset.f; if (!ref) return;
+  const sid = lastMusicSession();
+  const p = log.find(r => r.session === sid && r.typ === "Stück" && (r.block + "-" + r.pos) === ref);
+  addEntry({ typ: "Erleben", ref, feel: f, block: p.block, pos: p.pos, name: f + " (" + p.name + ")", start: p.start, end: p.end, session: sid });
+  renderReview();
+});
+function marker(label) { addEntry({ typ: "Marker", block: current ? current.block : "", name: label + (current ? " während " + current.name : ""), start: Date.now() }); }
+try {
+  navigator.mediaSession.setActionHandler("pause", () => { marker("Marker (Taste)"); setTimeout(tryPlay, 50); });
+  navigator.mediaSession.setActionHandler("play", () => tryPlay());
+  navigator.mediaSession.setActionHandler("nexttrack", () => marker("Marker (Taste vor)"));
+  navigator.mediaSession.setActionHandler("previoustrack", () => marker("Marker (Taste zurück)"));
+} catch (e) {}
+
+/* ================= Schwarzsperre ================= */
+let lastTap = 0, qTimer = null;
+function blackOn() {
+  $("blackout").style.display = "block"; $("unlockq").style.display = "none";
+  keepAwake();
+  try { document.documentElement.requestFullscreen?.(); } catch (e) {}
+  addEntry({ typ: "Bildschirm", name: "Schwarzsperre an", start: Date.now() });
+}
+function blackOff() {
+  $("blackout").style.display = "none"; $("unlockq").style.display = "none";
+  try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) {}
+  addEntry({ typ: "Bildschirm", name: "Schwarzsperre aus", start: Date.now() });
+}
+$("blackbtn").addEventListener("click", blackOn);
+$("blackout").addEventListener("pointerdown", e => {
+  e.preventDefault(); e.stopPropagation();
+  if (e.target.closest("#unlockq")) return;
+  const now = Date.now();
+  if (now - lastTap < 450) {
+    $("unlockq").style.display = "block";
+    clearTimeout(qTimer); qTimer = setTimeout(() => { $("unlockq").style.display = "none"; }, 6000);
+    lastTap = 0;
+  } else lastTap = now;
+});
+["click", "dblclick", "contextmenu", "touchstart", "touchmove", "wheel"].forEach(ev =>
+  $("blackout").addEventListener(ev, e => { if (!e.target.closest("#unlockq")) { e.preventDefault(); e.stopPropagation(); } }, { passive: false }));
+$("unlockyes").addEventListener("pointerup", e => { e.stopPropagation(); clearTimeout(qTimer); blackOff(); });
+$("unlockno").addEventListener("pointerup", e => { e.stopPropagation(); clearTimeout(qTimer); $("unlockq").style.display = "none"; });
+
+/* ================= Export als ZIP ================= */
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function makeZip(files) {
+  const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+  const d = new Date(), time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  for (const f of files) {
+    const name = enc.encode(f.name), data = enc.encode("﻿" + f.text), crc = crc32(data);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+    h.setUint16(10, time, true); h.setUint16(12, date, true); h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true);
+    h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+    parts.push(h.buffer, name, data);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true);
+    c.setUint16(12, time, true); c.setUint16(14, date, true); c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true);
+    c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+    central.push(c.buffer, name);
+    off += 30 + name.length + data.length;
+  }
+  const csize = central.reduce((s, x) => s + (x.byteLength ?? x.length), 0), e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...central, e.buffer], { type: "application/zip" });
+}
+function tcols(ms) { const d = new Date(ms); return [dstamp(d), stamp(d), Math.round(ms)]; }
+$("saveall").addEventListener("click", async () => {
+  $("savestatus").textContent = "Stelle Daten zusammen …";
+  await flush();
+  const [L, BT, SN, EV, AC, EC] = await Promise.all(["log", "beat", "snd", "evt", "acc", "ecg"].map(readKind));
+  const files = [];
+  // Messdaten.csv im bisherigen Format (Protokoll plus Herzschläge), damit die alten Auswertungen weiter passen
+  const m = ["Sitzung;Typ;Block;Position;Bezeichnung;Datum;Start;Ende;Dauer_s;RR_ms"];
+  L.forEach(r => { const st = new Date(r.start), e = r.end ? new Date(r.end) : null;
+    m.push([r.session ?? "", r.typ, r.block ?? "", r.pos ?? "", r.name, dstamp(st), stamp(st), e ? stamp(e) : "", e ? num((e - st) / 1000) : "", ""].join(";")); });
+  BT.forEach(b => { const st = new Date(b[0]); m.push([b[2] ?? "", "Herzschlag", "", "", "", dstamp(st), stamp(st), "", "", b[1]].join(";")); });
+  files.push({ name: "Messdaten.csv", text: m.join("\n") });
+  if (SN.length) {
+    const s = ["Sitzung;Quelle;Datum;Zeit;Epoch_ms;Pegel_dBFS;Spitze_dBFS;Hintergrund_dBFS;Bass_dB;Mitte_dB;Hoehe_dB;Schwerpunkt_Hz;Flachheit;Einsaetze;Tempo_bpm;Tempo_Deutlichkeit;Tonart;Tonart_Deutlichkeit;Art_grob;Kopfhoerer"];
+    SN.forEach(r => s.push([r.s ?? "", r.src, ...tcols(r.t), num(r.lev), num(r.max), num(r.bg), num(r.B), num(r.M), num(r.H), Math.round(r.cen), num(r.flat, 3), r.on, num(r.bpm), num(r.tstr, 2), r.key, num(r.kstr, 2), r.cls, r.ph ? "auf" : "ab"].join(";")));
+    files.push({ name: "Klang_pro_Sekunde.csv", text: s.join("\n") });
+  }
+  if (EV.length) {
+    const s = ["Sitzung;Quelle;Datum;Zeit;Epoch_ms;Dauer_s;Spitze_dBFS;Hintergrund_dBFS;Ueber_Hintergrund_dB;Anstieg_dB;Flachheit;Schwerpunkt_Hz;Hauptfrequenz_Hz;Art_grob;Kopfhoerer"];
+    EV.forEach(r => s.push([r.s ?? "", r.src, ...tcols(r.t), num(r.dur, 2), num(r.max), num(r.bg), num(r.ueber), num(r.rise), num(r.flat, 3), Math.round(r.cen), Math.round(r.pkf), r.cls, r.ph ? "auf" : "ab"].join(";")));
+    files.push({ name: "Schallereignisse.csv", text: s.join("\n") });
+  }
+  if (AC.length) {
+    const s = ["Sitzung;Datum;Zeit;Epoch_ms;Sensor_us;x_mg;y_mg;z_mg"];
+    AC.forEach(c => { const n = c.v.length / 3, dt = 1000 / c.r;
+      for (let i = 0; i < n; i++) { const off = (n - 1 - i) * dt; s.push([c.s ?? "", ...tcols(c.t - off), Math.round(c.us - off * 1000), c.v[3 * i], c.v[3 * i + 1], c.v[3 * i + 2]].join(";")); } });
+    files.push({ name: "Beschleunigung.csv", text: s.join("\n") });
+  }
+  if (EC.length) {
+    const s = ["Sitzung;Epoch_ms;Sensor_us;EKG_uV"];
+    EC.forEach(c => { const n = c.v.length, dt = 1000 / c.r;
+      for (let i = 0; i < n; i++) { const off = (n - 1 - i) * dt; s.push([c.s ?? "", Math.round(c.t - off), Math.round(c.us - off * 1000), c.v[i]].join(";")); } });
+    files.push({ name: "EKG.csv", text: s.join("\n") });
+  }
+  const blob = makeZip(files), a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "Messdaten2_" + idstamp(new Date()) + ".zip";
+  document.body.appendChild(a); a.click(); a.remove();
+  $("savestatus").textContent = `Gespeichert: ${files.map(f => f.name).join(", ")} (${(blob.size / 1e6).toFixed(1)} MB). Die Datei liegt in den Downloads.`;
+});
+let armed = false;
+$("clear").addEventListener("click", async () => {
+  if (!armed) { armed = true; $("clear").textContent = "Wirklich löschen? Vorher speichern! Nochmal tippen"; setTimeout(() => { armed = false; $("clear").textContent = "Gespeicherte Daten löschen"; }, 5000); return; }
+  armed = false; $("clear").textContent = "Gespeicherte Daten löschen";
+  queue = [];
+  await new Promise(res => { const tx = db.transaction("rec", "readwrite"); tx.objectStore("rec").clear(); tx.oncomplete = res; tx.onerror = res; });
+  log = []; Object.keys(counts).forEach(k => counts[k] = 0);
+  $("log").querySelector("tbody").innerHTML = ""; renderReview(); memStatus();
+  $("savestatus").textContent = "Gelöscht.";
+});
+
+/* ================= Start der Seite ================= */
+(async () => {
+  try { await navigator.storage?.persist?.(); } catch (e) {}
+  try {
+    db = await openDb();
+    log = await readKind("log"); log.slice(-300).forEach(row);
+    for (const k of Object.keys(counts)) counts[k] = await countKind(k);
+  } catch (e) { $("mem").textContent = "Gerätespeicher nicht verfügbar: " + (e.message || e); }
+  memStatus(); showOrder(); renderReview(); listMics();
+})();
+</script>
+</body>
+</html>
