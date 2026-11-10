@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Biodanza Messplayer 6</title>
+<title>Biodanza Messplayer 7</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 680px; margin: 1.5rem auto; padding: 0 1rem; color: #222; background: #fafaf7; line-height: 1.5; }
   h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 0.2rem; }
@@ -15,6 +15,7 @@
   select { font-size: 1rem; padding: 0.2rem; max-width: 100%; }
   button { font-size: 1rem; padding: 0.55rem 1rem; border-radius: 8px; border: 1px solid #888; background: #fff; cursor: pointer; margin: 0.25rem 0.25rem 0.25rem 0; }
   button.main { background: #2d6a4f; color: #fff; border-color: #2d6a4f; }
+  button.main.stop { background: #b3261e; border-color: #b3261e; }
   button.act { background: #eef4f0; border-color: #9bb8a6; }
   button.act.on, button.tog.on { background: #2d6a4f; color: #fff; border-color: #2d6a4f; }
   button:disabled { opacity: 0.4; cursor: default; }
@@ -47,9 +48,11 @@
 </style>
 </head>
 <body>
-<h1>Biodanza Messplayer 6</h1>
+<h1>Biodanza Messplayer 7</h1>
 <div class="hint">Herz, Atmung, Bewegung, Klangumgebung und Musik mit derselben Uhr. Gurt, Mikrofon und Musik laufen unabhängig voneinander.</div>
 
+<button class="main" id="master" disabled>Noch keine Aufzeichnung aktiv</button>
+<div id="crash" class="hint" style="display:none;color:#b00020"></div>
 <div id="bar"><span id="wl">Bildschirm: nicht nötig</span> · <span id="dur">keine Aufzeichnung</span> · <span id="mem">Speicher …</span></div>
 
 <fieldset>
@@ -65,10 +68,11 @@
 </fieldset>
 
 <fieldset>
-  <legend>Fußsensor (Polar Verity Sense)</legend>
-  <div class="hint">Über dem Knöchel tragen, immer gleich herum. Einschalten und auf blaues Licht stellen (Sensormodus). Polar-App vorher schließen. Am Anfang und Ende dreimal fest aufstampfen.</div>
-  <button class="main" id="vconnect">Fußsensor verbinden</button>
-  <button id="vstop" disabled>Fußsensor beenden</button>
+  <legend>Polar Verity Sense</legend>
+  <div class="hint">Einschalten und auf blaues Licht stellen (Sensormodus). Polar-App vorher schließen. Am Fuß misst er Bewegung, rechts außen über dem Knöchel. Am Oberarm zusätzlich die Pulswelle, Licht zur Haut, fest anliegend, immer dieselbe Stelle. Zum Abgleich am Anfang und Ende dreimal hüpfen.</div>
+  <label>Trageort: <select id="vplace"><option value="Fuß">Fuß</option><option value="Arm">Oberarm</option></select></label>
+  <button class="main" id="vconnect">Sense verbinden</button>
+  <button id="vstop" disabled>Sense beenden</button>
   <div id="vstatus" class="stat"></div>
 </fieldset>
 
@@ -202,7 +206,7 @@ const num = (x, d = 1) => (x === null || x === undefined || !Number.isFinite(x))
 const hms = s => `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(Math.floor(s % 60))}`;
 
 /* ================= Speicher (IndexedDB, nur anhängen) ================= */
-let db = null, queue = [], counts = { log: 0, beat: 0, acc: 0, ecg: 0, snd: 0, evt: 0, sync: 0, atem: 0, temp: 0, foot: 0 };
+let db = null, queue = [], counts = { log: 0, beat: 0, acc: 0, ecg: 0, snd: 0, evt: 0, sync: 0, atem: 0, temp: 0, foot: 0, ppg: 0, vhr: 0 };
 function openDb() {
   return new Promise((res, rej) => {
     const r = indexedDB.open("messplayer2", 1);
@@ -279,7 +283,7 @@ function toneWav(sec, amp) {
   for (let i = 0; i < n; i++) v.setInt16(44 + 2 * i, Math.round(amp * 32767 * Math.sin(2 * Math.PI * 25 * i / rate)), true);
   return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
 }
-const keep = new Audio(toneWav(4, 0.003)); keep.loop = true;
+const keep = new Audio(toneWav(8, 0.003)); keep.loop = true;
 let keepLogged = false;
 function keepTone() {
   if (!$("keepon").checked || !needAwake()) { if (!keep.paused) keep.pause(); return; }
@@ -560,6 +564,7 @@ function liveBeats(rrs, now) {
   let t = (lastBeat !== null && Math.abs(lastBeat + sum - now) < 3000) ? lastBeat + sum : now;
   const fresh = [];
   for (let i = rrs.length - 1; i >= 0; i--) { fresh.unshift([t, Math.round(rrs[i]), hrRec, now]); t -= rrs[i]; }
+  if (rrs.length) lastBpm = Math.round(60000 / rrs[rrs.length - 1]);
   fresh.forEach(b => put("beat", [Math.round(b[0]), b[1], b[2], b[3]])); nBeats += fresh.length; lastBeat = fresh[fresh.length - 1][0];
 }
 function finishBurst(endT) {
@@ -960,8 +965,8 @@ $("reviewlist").addEventListener("click", e => {
 });
 function marker(label) { addEntry({ typ: "Marker", block: current ? current.block : "", name: label + (current ? " während " + current.name : ""), start: Date.now() }); }
 try {
-  navigator.mediaSession.setActionHandler("pause", () => { marker("Marker (Taste)"); setTimeout(tryPlay, 50); });
-  navigator.mediaSession.setActionHandler("play", () => tryPlay());
+  navigator.mediaSession.setActionHandler("pause", () => { marker("Marker (Taste)"); setTimeout(() => { if (running) tryPlay(); else keepTone(); }, 50); });
+  navigator.mediaSession.setActionHandler("play", () => { if (running) tryPlay(); else keepTone(); });
   navigator.mediaSession.setActionHandler("nexttrack", () => marker("Marker (Taste vor)"));
   navigator.mediaSession.setActionHandler("previoustrack", () => marker("Marker (Taste zurück)"));
 } catch (e) {}
@@ -998,19 +1003,21 @@ $("unlockno").addEventListener("click", e => { e.preventDefault(); e.stopPropaga
 ["pointerdown", "pointerup", "click", "touchstart", "touchend"].forEach(ev => $("guard").addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); }, { passive: false }));
 
 /* ================= Fußsensor Polar Verity Sense ================= */
-let vDev = null, vCp = null, vData = null, vWanted = false, vRec = null, vLast = 0, vN = 0, vFactor = 0.000244141, vFrameSeen = false, vResp = null, vReconn = false, vListened = null;
+let vPlace = "Fuß", vP = 0, vPpgSeen = false, vHr = null, lastBpm = null, vDev = null, vCp = null, vData = null, vWanted = false, vRec = null, vLast = 0, vN = 0, vFactor = 0.000244141, vFrameSeen = false, vResp = null, vReconn = false, vListened = null;
 function vStatus(t) { $("vstatus").textContent = t; }
 /* Delta-Format nach dem Polar BLE SDK: Referenzwert mit 16 bit je Achse, dann Blöcke aus Bitbreite, Anzahl und bitweise gepackten Differenzen */
-function vDelta(b) {
-  const i16 = o => { const x = b[o] | (b[o + 1] << 8); return x & 0x8000 ? x - 0x10000 : x; };
-  let last = [i16(0), i16(2), i16(4)], o = 6; const out = [...last];
+function vDelta(b, ch, bytes) {
+  const lim = Math.pow(2, 8 * bytes - 1), span = lim * 2;
+  const ref = o => { let x = 0; for (let k = 0; k < bytes; k++) x += b[o + k] * Math.pow(2, 8 * k); return x >= lim ? x - span : x; };
+  let last = []; for (let c = 0; c < ch; c++) last.push(ref(c * bytes));
+  let o = ch * bytes; const out = [...last];
   while (o + 2 <= b.length) {
-    const size = b[o++], cnt = b[o++], len = Math.ceil(cnt * size * 3 / 8);
+    const size = b[o++], cnt = b[o++], len = Math.ceil(cnt * size * ch / 8);
     if (o + len > b.length) break;
     let bit = 0;
     for (let k = 0; k < cnt; k++) {
-      const next = [0, 0, 0];
-      for (let c = 0; c < 3; c++) {
+      const next = new Array(ch).fill(0);
+      for (let c = 0; c < ch; c++) {
         let val = 0;
         for (let i = 0; i < size; i++, bit++) if (b[o + (bit >> 3)] & (1 << (bit & 7))) val += Math.pow(2, i);
         if (size > 0 && val >= Math.pow(2, size - 1)) val -= Math.pow(2, size);
@@ -1024,25 +1031,34 @@ function vDelta(b) {
 }
 function onVData(ev) {
   const v = ev.target.value, now = Date.now();
-  if (v.byteLength < 12 || v.getUint8(0) !== 2) return;
-  const tsUs = Number(v.getBigUint64(1, true) / 1000n), ft = v.getUint8(9), body = new Uint8Array(v.buffer, v.byteOffset + 10, v.byteLength - 10);
+  if (v.byteLength < 12) return;
+  const type = v.getUint8(0), tsUs = Number(v.getBigUint64(1, true) / 1000n), ft = v.getUint8(9), body = new Uint8Array(v.buffer, v.byteOffset + 10, v.byteLength - 10);
+  if (type === 1) { /* PPG: 3 Lichtkanäle und Umgebungslicht, 24 bit */
+    if (ft !== 0x80) { if (!vPpgSeen) { vPpgSeen = true; addEntry({ typ: "Sense", name: "Unbekanntes PPG-Format " + ft + ": " + hexOf(v).slice(0, 80), start: now, session: vRec }); } return; }
+    const raw = vDelta(body, 4, 3);
+    if (!vPpgSeen) { vPpgSeen = true; addEntry({ typ: "Sense", name: `Erste PPG-Daten, ${raw.length / 4} Werte im Paket, Kanal 0: ${raw[0]}, Umgebung: ${raw[3]}`, start: now, session: vRec }); }
+    put("ppg", { t: now, us: tsUs, r: 55, s: vRec, v: raw }); vP += raw.length / 4; vLast = now; return;
+  }
+  if (type !== 2) return;
   let raw;
-  if (ft & 0x80) { raw = vDelta(body); raw = raw.map(x => Math.round(x * vFactor * 1000)); }
+  /* 0x81 kommt fertig in mg, 0x80 braucht den Faktor aus der Startantwort */
+  if (ft === 0x81) raw = vDelta(body, 3, 2);
+  else if (ft === 0x80) raw = vDelta(body, 3, 2).map(x => Math.round(x * vFactor * 1000));
   else if (ft === 1) { raw = []; for (let o = 10; o + 5 < v.byteLength; o += 6) raw.push(v.getInt16(o, true), v.getInt16(o + 2, true), v.getInt16(o + 4, true)); }
-  else { if (!vFrameSeen) { vFrameSeen = true; addEntry({ typ: "Fußsensor", name: "Unbekanntes Datenformat " + ft + ": " + hexOf(v).slice(0, 80), start: now }); } return; }
-  if (!vFrameSeen) { vFrameSeen = true; const m = Math.round(Math.hypot(raw[0], raw[1], raw[2])); addEntry({ typ: "Fußsensor", name: `Erste Daten, Format ${ft}, ${raw.length / 3} Werte im Paket, Betrag ${m} mg, Faktor ${vFactor}`, start: now, session: vRec }); }
-  put("foot", { t: now, us: tsUs, r: 52, s: vRec, v: raw }); vN += raw.length / 3; vLast = now;
+  else { if (!vFrameSeen) { vFrameSeen = true; addEntry({ typ: "Sense", name: "Unbekanntes Datenformat " + ft + ": " + hexOf(v).slice(0, 80), start: now, session: vRec }); } return; }
+  if (!vFrameSeen) { vFrameSeen = true; const m = Math.round(Math.hypot(raw[0], raw[1], raw[2])); addEntry({ typ: "Sense", name: `Erste Daten, Format ${ft}, ${raw.length / 3} Werte im Paket, Betrag ${m} mg`, start: now, session: vRec }); }
+  put("foot", { t: now, us: tsUs, r: 55, s: vRec, w: vPlace, v: raw }); vN += raw.length / 3; vLast = now;
 }
 function onVCp(ev) {
   const v = ev.target.value;
   if (v.getUint8(0) !== 0xF0 || v.byteLength < 4) return;
-  if (v.getUint8(1) === 2 && v.getUint8(2) === 2) {
+  if (v.getUint8(1) === 2) {
     const status = v.getUint8(3);
     if (status === 0) { /* Parameter ab Byte 5, Faktor ist Typ 5 mit 4 Byte */
       const size = { 0: 2, 1: 2, 2: 2, 3: 4, 4: 1, 5: 4 };
       for (let o = 5; o + 2 <= v.byteLength;) {
         const t = v.getUint8(o), c = v.getUint8(o + 1), w = size[t]; if (!w || o + 2 + c * w > v.byteLength) break;
-        if (t === 5 && c >= 1) { const f = v.getFloat32(o + 2, true); if (f > 0 && f < 1) vFactor = f; }
+        if (t === 5 && c >= 1 && v.getUint8(2) === 2) { const f = v.getFloat32(o + 2, true); if (f > 0 && f < 1) vFactor = f; }
         o += 2 + c * w;
       }
     }
@@ -1067,14 +1083,26 @@ async function vAttach() {
   if (st === 6) { await vSend([0x03, 0x02]); await wait(300); st = await vSend(full); }
   if (st !== 0) { const st2 = await vSend(full.slice(0, 14)); if (st2 === 0) st = 0; else if (st2 !== -1) st = st2; }
   if (st !== 0) throw new Error("Start abgelehnt, Code " + st);
-  addEntry({ typ: "Fußsensor", name: "Beschleunigung gestartet", start: Date.now(), session: vRec });
+  addEntry({ typ: "Sense", name: "Beschleunigung gestartet, Trageort " + vPlace, start: Date.now(), session: vRec });
+  if (vPlace === "Arm") {
+    const ppg = [0x02, 0x01, 0x00, 0x01, 0x37, 0x00, 0x01, 0x01, 0x16, 0x00, 0x04, 0x01, 0x04];
+    let p = await vSend(ppg);
+    if (p === 6) { await vSend([0x03, 0x01]); await wait(300); p = await vSend(ppg); }
+    addEntry({ typ: "Sense", name: p === 0 ? "PPG gestartet" : "PPG abgelehnt, Code " + p, start: Date.now(), session: vRec });
+    try {
+      const hs = await server.getPrimaryService("heart_rate"); vHr = await hs.getCharacteristic("heart_rate_measurement");
+      vHr.removeEventListener("characteristicvaluechanged", onVHr); vHr.addEventListener("characteristicvaluechanged", onVHr);
+      await vHr.startNotifications();
+    } catch (e) { addEntry({ typ: "Sense", name: "Puls des Sense nicht verfügbar: " + (e.message || e), start: Date.now(), session: vRec }); }
+  }
 }
+function onVHr(ev) { const v = ev.target.value, f = v.getUint8(0); put("vhr", { t: Date.now(), s: vRec, b: f & 1 ? v.getUint16(1, true) : v.getUint8(1) }); }
 async function onVLost() {
   if (!vWanted || vReconn) return;
   vReconn = true; vStatus("Verbindung verloren, verbinde neu …");
-  addEntry({ typ: "Fußsensor", name: "Verbindung verloren", start: Date.now(), session: vRec });
+  addEntry({ typ: "Sense", name: "Verbindung verloren", start: Date.now(), session: vRec });
   for (let i = 0; i < 40 && vWanted; i++) {
-    try { await vAttach(); addEntry({ typ: "Fußsensor", name: "Wieder verbunden", start: Date.now(), session: vRec }); vReconn = false; return; }
+    try { await vAttach(); addEntry({ typ: "Sense", name: "Wieder verbunden", start: Date.now(), session: vRec }); vReconn = false; return; }
     catch (e) { await wait(3000); }
   }
   vReconn = false; vStatus("Neu verbinden fehlgeschlagen. Bitte „Fußsensor verbinden“ tippen.");
@@ -1082,34 +1110,35 @@ async function onVLost() {
 $("vconnect").addEventListener("click", async () => {
   if (!navigator.bluetooth) { vStatus("Bluetooth ist in diesem Browser nicht verfügbar."); return; }
   try {
-    const dev = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: "Polar Sense" }], optionalServices: [PMD_SVC] });
+    const dev = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: "Polar Sense" }], optionalServices: [PMD_SVC, "heart_rate"] });
     if (vDev && vDev !== dev) { try { vDev.gatt.disconnect(); } catch (e) {} }
     vDev = dev;
     if (vListened !== dev) { vListened = dev; dev.addEventListener("gattserverdisconnected", onVLost); }
-    if (!vRec) { vRec = idstamp(new Date()); vN = 0; vFrameSeen = false; }
+    vPlace = $("vplace").value; $("vplace").disabled = true;
+    if (!vRec) { vRec = idstamp(new Date()); vN = 0; vP = 0; vFrameSeen = false; vPpgSeen = false; }
     vStatus("Verbinde …");
     await vAttach();
-    if (!vWanted) addEntry({ typ: "Fußsensor", name: "Aufzeichnung gestartet: " + (dev.name || "Verity Sense"), start: Date.now(), session: vRec });
+    if (!vWanted) addEntry({ typ: "Sense", name: "Aufzeichnung gestartet: " + (dev.name || "Verity Sense"), start: Date.now(), session: vRec });
     vWanted = true; markRec(); keepAwake();
     $("vstop").disabled = false; $("vconnect").textContent = "Neu verbinden";
     vStatus("Verbunden mit " + (dev.name || "Verity Sense") + ". Warte auf Daten …");
   } catch (e) {
     vStatus("Verbindung nicht möglich: " + (e && e.message ? e.message : e));
-    addEntry({ typ: "Fußsensor", name: "Verbindung nicht möglich: " + (e && e.message ? e.message : e), start: Date.now(), session: vRec || "" });
+    addEntry({ typ: "Sense", name: "Verbindung nicht möglich: " + (e && e.message ? e.message : e), start: Date.now(), session: vRec || "" });
   }
 });
 $("vstop").addEventListener("click", async () => {
   vWanted = false;
-  try { await vSend([0x03, 0x02]); } catch (e) {}
+  try { await vSend([0x03, 0x02]); if (vPlace === "Arm") await vSend([0x03, 0x01]); } catch (e) {}
   try { vDev?.gatt.disconnect(); } catch (e) {}
-  addEntry({ typ: "Fußsensor", name: `Aufzeichnung beendet, ${Math.round(vN)} Werte`, start: Date.now(), session: vRec });
+  addEntry({ typ: "Sense", name: `Aufzeichnung beendet, ${Math.round(vN)} Werte`, start: Date.now(), session: vRec });
   vStatus("Beendet. Bitte „Alles speichern“ tippen."); vRec = null;
-  $("vstop").disabled = true; $("vconnect").textContent = "Fußsensor verbinden"; wlShow(); flush();
+  $("vstop").disabled = true; $("vconnect").textContent = "Sense verbinden"; $("vplace").disabled = false; wlShow(); flush();
 });
 setInterval(() => {
   if (!vWanted || !vLast) return;
   const age = Math.round((Date.now() - vLast) / 1000);
-  vStatus((age > 5 ? `Keine Daten seit ${age} s · ` : "Fußsensor läuft · ") + `${Math.round(vN)} Werte`);
+  vStatus((age > 5 ? `Keine Daten seit ${age} s · ` : `Sense läuft (${vPlace}) · `) + `${Math.round(vN)} Werte` + (vPlace === "Arm" ? `, ${Math.round(vP)} PPG` : ""));
 }, 2000);
 
 /* ================= Atemhilfe ================= */
@@ -1293,6 +1322,92 @@ $("tpget").addEventListener("click", async () => {
   tpFetch();
 });
 
+/* ================= Hauptknopf, Statusanzeige, Absturz ================= */
+function anyActive() { return running || hrWanted || vWanted || micOn || !!breath; }
+function knownDevices() { return !!(hrDev || vDev || tpDev); }
+let masterArm = 0, micWas = false;
+function masterShow() {
+  const b = $("master"), active = anyActive();
+  if (active) { b.disabled = false; b.className = "main stop"; b.textContent = Date.now() - masterArm < 4000 ? "Wirklich alles beenden? Nochmal tippen" : "Aufzeichnung läuft · Alles beenden"; }
+  else if (knownDevices()) { b.disabled = false; b.className = "main"; b.textContent = "Aufzeichnung aus · Alles wieder starten"; }
+  else { b.disabled = true; b.className = "main"; b.textContent = "Noch keine Aufzeichnung aktiv"; }
+}
+async function stopAll() {
+  micWas = micOn;
+  if (sleep) endSleep("Einschlafen abgebrochen (Hauptknopf)");
+  if (running) stopMusic();
+  if (bOpt) bToggle("o"); if (bTon) bToggle("t");
+  if (micOn) $("micstop").click();
+  if (hrWanted) $("hrstop").click();
+  if (vWanted) $("vstop").click();
+  addEntry({ typ: "Aufzeichnung", name: "Alles beendet (Hauptknopf)", start: Date.now() });
+  await flush(); keepTone(); wlShow();
+}
+async function startAll() {
+  addEntry({ typ: "Aufzeichnung", name: "Alles gestartet (Hauptknopf)", start: Date.now() });
+  if (hrDev) {
+    try {
+      hrRec = idstamp(new Date()); nBeats = 0; accN = 0; ecgN = 0; nLate = 0; lastBeat = null; burst = null;
+      await hrAttach(); hrWanted = true; markRec(); $("useacc").disabled = $("useecg").disabled = $("accrate").disabled = true;
+      addEntry({ typ: "Gurt", name: "Aufzeichnung gestartet: " + (hrDev.name || "Gurt"), start: Date.now(), session: hrRec });
+      $("hrstop").disabled = false; $("hrconnect").textContent = "Neu verbinden"; hrStatus("Verbunden. Warte auf Herzschläge …");
+    } catch (e) { hrRec = null; hrStatus("Gurt nicht erreichbar: " + (e.message || e)); }
+  }
+  if (vDev) {
+    try {
+      vRec = idstamp(new Date()); vN = 0; vP = 0; vFrameSeen = false; vPpgSeen = false; $("vplace").disabled = true;
+      await vAttach(); vWanted = true; markRec();
+      addEntry({ typ: "Sense", name: "Aufzeichnung gestartet: " + (vDev.name || "Verity Sense"), start: Date.now(), session: vRec });
+      $("vstop").disabled = false; $("vconnect").textContent = "Neu verbinden"; vStatus("Verbunden.");
+    } catch (e) { vRec = null; $("vplace").disabled = false; vStatus("Sense nicht erreichbar: " + (e.message || e)); }
+  }
+  if (micWas) $("micstart").click();
+  if (tpDev) tpFetch();
+  keepAwake(); wlShow(); flush();
+}
+$("master").addEventListener("click", () => {
+  if (anyActive()) {
+    if (Date.now() - masterArm > 4000) { masterArm = Date.now(); masterShow(); return; }
+    masterArm = 0; stopAll().then(masterShow);
+  } else if (knownDevices()) { $("master").disabled = true; $("master").textContent = "Starte …"; startAll().then(masterShow); }
+});
+setInterval(masterShow, 1000);
+function statusLine() {
+  const p = [];
+  if (hrWanted) p.push(lastBpm ? `Puls ${lastBpm}` : "Gurt");
+  if (vWanted) p.push(`Sense ${vPlace}`);
+  if (micOn) p.push("Mikro");
+  if (tpDev) p.push("Temp");
+  if (breath) p.push("Atem");
+  return p.join(" · ");
+}
+function updateMeta() {
+  if (!("mediaSession" in navigator) || !anyActive()) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: current ? passName() : "Aufzeichnung läuft", artist: statusLine() || "nichts verbunden", album: "Halt-Taste setzt einen Marker" });
+    navigator.mediaSession.playbackState = "playing";
+  } catch (e) {}
+}
+setInterval(updateMeta, 5000);
+const ALIVE = "messplayer_aktiv";
+function aliveTick() {
+  try {
+    if (anyActive()) localStorage.setItem(ALIVE, JSON.stringify({ t: Date.now(), hr: hrWanted, v: vWanted, m: micOn, tp: !!tpDev, mu: running }));
+    else localStorage.removeItem(ALIVE);
+  } catch (e) {}
+}
+setInterval(aliveTick, 5000);
+function crashCheck() {
+  try {
+    const a = JSON.parse(localStorage.getItem(ALIVE) || "null"); localStorage.removeItem(ALIVE);
+    if (!a) return;
+    const list = [a.hr && "Gurt", a.v && "Sense", a.m && "Mikrofon", a.tp && "Thermometer", a.mu && "Musik"].filter(Boolean).join(", ") || "Aufzeichnung";
+    const when = stamp(new Date(a.t)).slice(0, 8);
+    addEntry({ typ: "Abbruch", name: `Seite wurde neu geladen, offen war: ${list}. Zuletzt aktiv ${when}`, start: Date.now() }); flush();
+    $("crash").style.display = "block"; $("crash").textContent = `Die Aufzeichnung wurde um ${when} unterbrochen (Seite neu geladen). Bitte neu verbinden: ${list}.`;
+  } catch (e) {}
+}
+
 /* ================= Export als ZIP ================= */
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 function crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
@@ -1321,7 +1436,7 @@ function tcols(ms) { const d = new Date(ms); return [dstamp(d), stamp(d), Math.r
 async function buildZip() {
   $("savestatus").textContent = "Stelle Daten zusammen …";
   await flush();
-  const [L, BT, SN, EV, AC, EC, SY, AT, TP, FT] = await Promise.all(["log", "beat", "snd", "evt", "acc", "ecg", "sync", "atem", "temp", "foot"].map(readKind));
+  const [L, BT, SN, EV, AC, EC, SY, AT, TP, FT0, PP, VH] = await Promise.all(["log", "beat", "snd", "evt", "acc", "ecg", "sync", "atem", "temp", "foot", "ppg", "vhr"].map(readKind));
   const files = [];
   // Messdaten.csv im bisherigen Format (Protokoll plus Herzschläge), damit die alten Auswertungen weiter passen
   const m = ["Sitzung;Typ;Block;Position;Bezeichnung;Datum;Start;Ende;Dauer_s;RR_ms;Ankunft"];
@@ -1341,7 +1456,7 @@ async function buildZip() {
   }
   // Sensorzeit -> Uhrzeit: kleinste Verzögerung je Sitzung (live empfangene Pakete)
   const offs = {};
-  [["a", AC], ["e", EC], ["f", FT]].forEach(([kind, arr]) => arr.forEach(c => { const o = c.t - c.us / 1000; const k = kind + (c.s ?? ""); if (offs[k] === undefined || o < offs[k]) offs[k] = o; }));
+  [["a", AC], ["e", EC], ["f", FT0.concat(PP)]].forEach(([kind, arr]) => arr.forEach(c => { const o = c.t - c.us / 1000; const k = kind + (c.s ?? ""); if (offs[k] === undefined || o < offs[k]) offs[k] = o; }));
   /* Tatsächlicher Abstand der Werte aus den Zeitstempeln aufeinanderfolgender Pakete statt der Nennrate */
   const realDt = (arr, i, n, nominal) => {
     const p = i > 0 ? arr[i - 1] : null; if (!p || p.s !== arr[i].s || n <= 0) return nominal;
@@ -1362,12 +1477,26 @@ async function buildZip() {
       for (let i = 0; i < n; i++) { const off = (n - 1 - i) * dt; s.push([c.s ?? "", Math.round(base - off), Math.round(c.us - off * 1000), c.v[i]].join(";")); } });
     files.push({ name: "EKG.csv", text: s.join("\n") });
   }
-  if (FT.length) {
+  for (const [place, fname] of [["Fuß", "Fuss_Beschleunigung.csv"], ["Arm", "Arm_Beschleunigung.csv"]]) {
+    const FT = FT0.filter(c => (c.w || "Fuß") === place); if (!FT.length) continue;
     const s = ["Sitzung;Datum;Zeit;Epoch_ms;Sensor_us;x_mg;y_mg;z_mg"];
     FT.forEach((c, idx) => { const n = c.v.length / 3, dt = realDt(FT, idx, n, 1000 / c.r);
       const base = c.us / 1000 + offs["f" + (c.s ?? "")];
-      for (let i = 0; i < n; i++) { const off = (n - 1 - i) * dt; s.push([c.s ?? "", ...tcols(base - off), Math.round(c.us - off * 1000), c.v[3 * i], c.v[3 * i + 1], c.v[3 * i + 2]].join(";")); } });
-    files.push({ name: "Fuss_Beschleunigung.csv", text: s.join("\n") });
+      const sc = c.r === 52 ? 4.096 : 1; /* Altdaten bis Version 6 waren zu klein */
+      for (let i = 0; i < n; i++) { const off = (n - 1 - i) * dt; s.push([c.s ?? "", ...tcols(base - off), Math.round(c.us - off * 1000), Math.round(c.v[3 * i] * sc), Math.round(c.v[3 * i + 1] * sc), Math.round(c.v[3 * i + 2] * sc)].join(";")); } });
+    files.push({ name: fname, text: s.join("\n") });
+  }
+  if (PP.length) {
+    const s = ["Sitzung;Datum;Zeit;Epoch_ms;Sensor_us;ppg0;ppg1;ppg2;umgebung"];
+    PP.forEach((c, idx) => { const n = c.v.length / 4, dt = realDt(PP, idx, n, 1000 / c.r);
+      const base = c.us / 1000 + offs["f" + (c.s ?? "")];
+      for (let i = 0; i < n; i++) { const off = (n - 1 - i) * dt; s.push([c.s ?? "", ...tcols(base - off), Math.round(c.us - off * 1000), c.v[4 * i], c.v[4 * i + 1], c.v[4 * i + 2], c.v[4 * i + 3]].join(";")); } });
+    files.push({ name: "Arm_PPG.csv", text: s.join("\n") });
+  }
+  if (VH.length) {
+    const s = ["Sitzung;Datum;Zeit;Epoch_ms;Puls"];
+    VH.forEach(r => s.push([r.s ?? "", ...tcols(r.t), r.b].join(";")));
+    files.push({ name: "Sense_Puls.csv", text: s.join("\n") });
   }
   if (SY.length) {
     const s = ["Sitzung;Block;Position;Durchgang;Stueck;Datum;Zeit;Epoch_ms;Abspielposition_s;Verzoegerung_ms"];
@@ -1386,7 +1515,7 @@ async function buildZip() {
     files.push({ name: "Temperatur.csv", text: s.join("\n") });
   }
   const blob = makeZip(files);
-  return { blob, name: "Messdaten6_" + idstamp(new Date()) + ".zip", list: files.map(f => f.name).join(", ") };
+  return { blob, name: "Messdaten7_" + idstamp(new Date()) + ".zip", list: files.map(f => f.name).join(", ") };
 }
 $("saveall").addEventListener("click", async () => {
   const z = await buildZip(), a = document.createElement("a");
@@ -1433,7 +1562,7 @@ $("clear").addEventListener("click", async () => {
     log = await readKind("log"); log.slice(-300).forEach(row);
     for (const k of Object.keys(counts)) counts[k] = await countKind(k);
   } catch (e) { $("mem").textContent = "Gerätespeicher nicht verfügbar: " + (e.message || e); }
-  memStatus(); showOrder(); renderReview(); listMics();
+  memStatus(); showOrder(); renderReview(); listMics(); crashCheck(); masterShow();
 })();
 </script>
 </body>
