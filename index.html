@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Biodanza Messplayer 9</title>
+<title>Biodanza Messplayer 9.1</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 680px; margin: 1.5rem auto; padding: 0 1rem; color: #222; background: #fafaf7; line-height: 1.5; }
   h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 0.2rem; }
@@ -48,7 +48,7 @@
 </style>
 </head>
 <body>
-<h1>Biodanza Messplayer 9</h1>
+<h1>Biodanza Messplayer 9.1</h1>
 <div class="hint">Herz, Atmung, Bewegung, Klangumgebung und Musik mit derselben Uhr. Gurt, Mikrofon und Musik laufen unabhängig voneinander.</div>
 
 <button class="main" id="master" disabled>Noch keine Aufzeichnung aktiv</button>
@@ -187,7 +187,7 @@
 
 <fieldset>
   <legend>6. Daten speichern</legend>
-  <button class="main" id="saveall">Alles speichern (ZIP)</button>
+  <button class="main" id="saveall">Alles speichern (ZIP)</button> <button id="ordnew">Speicherordner wählen</button>
   <button class="main" id="shareall">Teilen</button>
   <button class="main" id="sharenow" style="display:none">Jetzt teilen</button>
   <div id="savestatus" class="hint">„Alles speichern“ legt die ZIP-Datei in die Downloads. „Teilen“ öffnet das Teilen-Menü, z. B. für E-Mail, WhatsApp oder die Claude-App. Die Datei unverändert an Claude schicken.</div>
@@ -305,9 +305,16 @@ function toneWav(sec, amp) {
   return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
 }
 const keep = new Audio(toneWav(8, 0.003)); keep.loop = true;
-let keepLogged = false;
+let keepLogged = false, keepOwn = false, keepHoldUntil = 0;
+/* Eigene Pause markieren. Hält jemand anderes den Ton an (Wecker, Anruf), 10 Minuten nicht neu starten, sonst nimmt der Player dem Wecker den Ton weg. */
+function keepPause() { if (keep.paused) return; keepOwn = true; try { keep.pause(); } catch (e) {} }
+keep.addEventListener("pause", () => {
+  if (keepOwn) { keepOwn = false; return; }
+  if ($("keepon").checked && needAwake()) { keepHoldUntil = Date.now() + 600000; addEntry({ typ: "Bildschirm", name: "Ton unterbrochen (Wecker oder Anruf), Wachhalte-Ton ruht 10 Minuten", start: Date.now() }); }
+});
 function keepTone() {
-  if (!$("keepon").checked || !needAwake()) { if (!keep.paused) keep.pause(); return; }
+  if (!$("keepon").checked || !needAwake()) { keepPause(); return; }
+  if (Date.now() < keepHoldUntil) return;
   if (keep.paused) keep.play().then(() => { if (!keepLogged) { keepLogged = true; addEntry({ typ: "Bildschirm", name: "Wachhalte-Ton läuft", start: Date.now() }); } }).catch(() => {});
 }
 setInterval(keepTone, 5000);
@@ -990,7 +997,7 @@ $("reviewlist").addEventListener("click", e => {
 function marker(label) { addEntry({ typ: "Marker", block: current ? current.block : "", name: label + (current ? " während " + current.name : ""), start: Date.now() }); }
 try {
   navigator.mediaSession.setActionHandler("pause", () => { if (!anyActive()) { recStopped(); return; } marker("Marker (Taste)"); setTimeout(() => { if (running && !mPause) tryPlay(); else keepTone(); }, 50); });
-  navigator.mediaSession.setActionHandler("play", () => { if (!anyActive()) { recStopped(); return; } if (running && !mPause) tryPlay(); else keepTone(); });
+  navigator.mediaSession.setActionHandler("play", () => { keepHoldUntil = 0; if (!anyActive()) { recStopped(); return; } if (running && !mPause) tryPlay(); else keepTone(); });
   navigator.mediaSession.setActionHandler("nexttrack", () => { if ($("testab").checked && !test) testStart(); else musicToggle(); });
   navigator.mediaSession.setActionHandler("previoustrack", () => breathKey());
 } catch (e) {}
@@ -1320,7 +1327,7 @@ function bDraw() {
 /* ================= Raumtemperatur ThermoPro TP357 ================= */
 const TP_SVC = "00010203-0405-0607-0809-0a0b0c0d1910", TP_READ = "00010203-0405-0607-0809-0a0b0c0d2b10", TP_WRITE = "00010203-0405-0607-0809-0a0b0c0d2b11";
 let tpDev = null, tpBusy = false;
-function tpStatus(t) { $("tpstatus").textContent = t; }
+function tpStatus(t) { $("tpstatus").textContent = (tpDev && tpDev.name ? tpDev.name + " · " : "") + t; }
 const hexOf = v => Array.from(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)).map(x => x.toString(16).padStart(2, "0")).join(" ");
 const wait = ms => new Promise(r => setTimeout(r, ms));
 async function tpConnect() {
@@ -1425,7 +1432,7 @@ function syncOpen(why, announce) {
 
 /* Zweites ThermoPro */
 let tp2Dev = null, tp2Busy = false, tp2LastTry = 0, tp2Logged = false;
-function tp2Status(t) { const el = $("tp2status"); if (el) el.textContent = t; }
+function tp2Status(t) { const el = $("tp2status"); if (el) el.textContent = (typeof tp2Dev !== "undefined" && tp2Dev && tp2Dev.name ? tp2Dev.name + " · " : "") + t; }
 async function tpReadDev(dev, status) {
   let last = null, svc = null;
   for (let i = 1; i <= 3 && !svc; i++) {
@@ -1553,6 +1560,11 @@ function masterShow() {
   else if (knownDevices()) { b.disabled = false; b.className = "main"; b.textContent = "Aufzeichnung aus · Alles wieder starten"; }
   else { b.disabled = true; b.className = "main"; b.textContent = "Noch keine Aufzeichnung aktiv"; }
 }
+function askWeight() {
+  let v = null; try { v = prompt("Gewicht in kg (0 = nicht eintragen)", ""); } catch (e) {}
+  if (v === null) return; const kg = parseFloat(String(v).replace(",", "."));
+  if (Number.isFinite(kg) && kg > 0 && kg < 400) { addEntry({ typ: "Gewicht", name: `${kg.toLocaleString("de-DE")} kg`, start: Date.now() }); flush(); }
+}
 async function stopAll() {
   micWas = micOn;
   if (sleep) endSleep("Einschlafen abgebrochen (Hauptknopf)");
@@ -1591,7 +1603,7 @@ async function startAll() {
 $("master").addEventListener("click", () => {
   if (anyActive()) {
     if (!endArm) { endArm = Date.now(); if (hrWanted && vWanted) syncOpen("Ende", true); masterShow(); return; }
-    endArm = 0; masterArm = 0; stopAll().then(masterShow);
+    endArm = 0; masterArm = 0; stopAll().then(() => { askWeight(); masterShow(); });
   } else if (knownDevices()) { $("master").disabled = true; $("master").textContent = "Starte …"; startAll().then(masterShow); }
 });
 setInterval(masterShow, 1000);
@@ -1616,7 +1628,7 @@ function updateMeta() {
 setInterval(updateMeta, 5000);
 let recWasActive = false;
 function recStopped() {
-  try { keep.pause(); keep.currentTime = 0; } catch (e) {}
+  try { keepPause(); keep.currentTime = 0; } catch (e) {}
   try { if (!running) audio.pause(); } catch (e) {}
   try { bCancel(); if (ctx && ctx.state === "running") ctx.suspend().catch(() => {}); } catch (e) {}
   if (!("mediaSession" in navigator)) return;
@@ -1838,10 +1850,10 @@ function tapFeed(k, now, vals, dt) {
 }
 /* letzte abgeschlossene Gruppe von 3 bis 8 Klopfern, davor 1,5 s ruhig, danach 1,5 s nichts mehr */
 function tapGrp(L) {
-  const n = L.length; if (n < 3 || Date.now() - L[n - 1] < 1500) return null;
-  let s = n - 1; while (s > 0 && L[s] - L[s - 1] >= 120 && L[s] - L[s - 1] <= 900) s--;
+  const n = L.length; if (n < 3 || Date.now() - L[n - 1] < 2000) return null;
+  let s = n - 1; while (s > 0 && L[s] - L[s - 1] >= 120 && L[s] - L[s - 1] <= 1400) s--;
   const k = n - s; if (k < 3 || k > 25) return null;
-  if (s > 0 && L[s] - L[s - 1] < 1200) return null;
+  if (s > 0 && L[s] - L[s - 1] < 1800) return null;
   return L.slice(s);
 }
 function tapCheck() {
@@ -1937,33 +1949,70 @@ function rPeaks(E) {
   }
   return pk.map(i => { let b = i; for (let k = Math.max(0, i - 11); k < Math.min(n, i + 11); k++) if (Math.abs(hp[k]) > Math.abs(hp[b])) b = k; return t[b]; });
 }
-/* Herzschläge auf die R-Zacken legen: Versatz je 10 Minuten aus dem Histogramm der Abstände */
+/* Herzschläge auf die R-Zacken legen (V9.1): Schlag für Schlag am Muster der Abstände entlang.
+   1. Fang: Versatz je 5 Minuten aus Schlägen, deren Abstand und der vorige Abstand zu zwei R-Abständen passen (je 25 ms).
+   2. Lauf: ist der vorige Schlag zugeordnet, folgt die nächste R-Zacke, wenn ihr Abstand zum Schlag passt (40 ms);
+      eine überzählige R-Zacke dazwischen wird übersprungen.
+   3. Sonst neu fangen: R-Zacke mit passendem Muster nahe der erwarteten Zeit (Versatz des Abschnitts, plus minus 1,5 s). */
 function alignBeats(B, R) {
   if (!R.length) return { lag: null, ok: 0, out: B.map(b => ({ t: b.t, ok: false })) };
-  /* Versatz der Herzschlag-Zeit zur R-Zacke je 5 Minuten: Histogramm der Abstände, gültig wenn die Spitze mindestens 30 Prozent der Schläge trägt */
-  const CH = 300000, hist = new Map(), cnt = new Map(), NB = 601;
-  for (const b of B) {
-    const key = Math.floor(b.t / CH); let h = hist.get(key); if (!h) { h = new Int32Array(NB); hist.set(key, h); cnt.set(key, 0); } cnt.set(key, cnt.get(key) + 1);
-    for (let k = lowerBound(R, b.t - 5000), hi = lowerBound(R, b.t + 1000); k < hi; k++) { const d = Math.round((b.t - R[k]) / 10) + 100; if (d >= 0 && d < NB) h[d]++; }
+  const n = B.length, CH = 300000, TOL2 = 25, TOL = 40;
+  const fits = (j, i, tol) => j >= 1 && j < R.length && Math.abs((R[j] - R[j - 1]) - B[i].rr) <= tol;
+  const pat = (j, i) => fits(j, i, TOL2) && i >= 1 && j >= 2 && Math.abs((R[j - 1] - R[j - 2]) - B[i - 1].rr) <= TOL2 && B[i].t - B[i - 1].t < 4000;
+  /* 1. Musterversatz je Abschnitt */
+  const lags = new Map();
+  for (let i = 1; i < n; i++) {
+    for (let k = lowerBound(R, B[i].t - 6000), hi = lowerBound(R, B[i].t + 1000); k < hi; k++)
+      if (pat(k, i)) { const key = Math.floor(B[i].t / CH); if (!lags.has(key)) lags.set(key, []); lags.get(key).push(B[i].t - R[k]); }
   }
-  const mode = h => { let bi = 1, bv = -1; for (let i = 1; i < NB - 1; i++) { const v = h[i - 1] + h[i] + h[i + 1]; if (v > bv) { bv = v; bi = i; } } return { lag: (bi - 100) * 10, v: bv }; };
-  const glob = new Int32Array(NB); hist.forEach(h => { for (let i = 0; i < NB; i++) glob[i] += h[i]; });
-  const g = mode(glob), lagOf = {}, used = [];
-  hist.forEach((h, key) => { const m = mode(h); if (m.v > 0.3 * cnt.get(key)) { lagOf[key] = m.lag; used.push(m.lag); } });
-  used.sort((a, b) => a - b); if (used.length) g.lag = used[used.length >> 1];
-  const keys = Object.keys(lagOf).map(Number).sort((a, b) => a - b);
-  const nearLag = key => { if (lagOf[key] !== undefined) return [lagOf[key]]; const o = []; let best = null; keys.forEach(k => { if (best === null || Math.abs(k - key) < Math.abs(best - key)) best = k; }); if (best !== null) o.push(lagOf[best]); o.push(g.lag); return o; };
-  let ok = 0;
-  const out = B.map(b => {
-    const key = Math.floor(b.t / CH), cands = [...nearLag(key), lagOf[key - 1], lagOf[key + 1]].filter(x => x !== undefined);
-    for (const lag of cands) {
-      const want = b.t - lag, k = lowerBound(R, want); let best = null;
-      for (const j of [k - 1, k]) if (j >= 0 && j < R.length && Math.abs(R[j] - want) < 120 && (best === null || Math.abs(R[j] - want) < Math.abs(best - want))) best = R[j];
-      if (best !== null) { ok++; return { t: best, ok: true }; }
-    }
-    return { t: b.t - cands[0], ok: false };
+  const lagOf = new Map(), all = [];
+  lags.forEach((L, key) => {
+    L.sort((a, b) => a - b); let best = null, bc = 0;
+    for (let a = 0, b = 0; a < L.length; a++) { while (L[b] < L[a] - 100) b++; let c = a; while (c + 1 < L.length && L[c + 1] <= L[a] + 100) c++; if (c - b + 1 > bc) { bc = c - b + 1; best = L[(b + c) >> 1]; } }
+    if (bc >= 10) { lagOf.set(key, best); all.push(best); }
   });
-  return { lag: g.lag, ok, out };
+  all.sort((a, b) => a - b);
+  const gl = all.length ? all[all.length >> 1] : 0;
+  const keys = [...lagOf.keys()].sort((a, b) => a - b);
+  const lagAt = t => { const key = Math.floor(t / CH); if (lagOf.has(key)) return lagOf.get(key); let bk = null; for (const k of keys) if (bk === null || Math.abs(k - key) < Math.abs(bk - key)) bk = k; return bk === null ? gl : lagOf.get(bk); };
+  /* 2. und 3. */
+  const out = new Array(n); let jp = -1, ok = 0, run = null, miss = 0, lastJ = -1;
+  for (let i = 0; i < n; i++) {
+    let j = -1;
+    if (jp >= 0 && i > 0 && B[i].t - B[i - 1].t < 4000) {
+      /* Zeitsprung seit dem vorigen Schlag: zeigt, ob der Gurt einen Schlag ausgelassen hat */
+      const dt = B[i].t - B[i - 1].t, tl = Math.min(450, 0.5 * B[i].rr);
+      for (let k = jp + 1; k <= jp + 4 && k < R.length; k++) {
+        if (Math.abs((R[k] - R[jp]) - dt) > tl) continue;
+        if (fits(k, i, TOL)) { j = k; break; }
+        /* überzählige R-Zacke zwischen k-1 und k: Abstand über zwei Zacken prüfen */
+        if (k - 2 >= jp && Math.abs((R[k] - R[k - 2]) - B[i].rr) <= TOL) { j = k; break; }
+      }
+    }
+    if (j < 0) {
+      /* neu fangen: Kandidaten nahe der erwarteten Zeit (Versatz aus dem Lauf und aus dem Abschnitt), bewertet nach den nächsten 8 Abständen (je 15 ms) */
+      const wants = [];
+      if (run !== null) wants.push([B[i].t - run, 300]);
+      wants.push([B[i].t - lagAt(B[i].t), 300]);
+      if (run === null || miss >= 8) wants.push([B[i].t - lagAt(B[i].t), 1500]);
+      let bs = 6, bd = 1e9;
+      for (const [w, W2] of wants) {
+        for (let k = Math.max(lastJ + 1, lowerBound(R, w - W2)), hi = lowerBound(R, w + W2); k < hi; k++) {
+          let sc = 0;
+          for (let q = 0; q < 8 && i + q < n && k + q < R.length; q++) {
+            if (q > 0 && B[i + q].t - B[i + q - 1].t > 4000) break;
+            if (k + q >= 1 && Math.abs((R[k + q] - R[k + q - 1]) - B[i + q].rr) <= 15) sc++;
+          }
+          const dd = Math.abs(R[k] - w);
+          if (sc > bs || (sc === bs && dd < bd)) { bs = sc; bd = dd; j = k; }
+        }
+        if (j >= 0) break;
+      }
+    }
+    if (j >= 0) { out[i] = { t: R[j], ok: true }; ok++; jp = j; lastJ = j; miss = 0; const l = B[i].t - R[j]; run = run === null ? l : 0.8 * run + 0.2 * l; }
+    else { jp = -1; miss++; out[i] = { t: B[i].t - (run !== null ? run : lagAt(B[i].t)), ok: false }; }
+  }
+  return { lag: gl, ok, out };
 }
 
 /* Klopfen in Brust und Fuß: Gruppen von 3 bis 8 Spitzen im Abstand 0,12 bis 0,9 s, davor ruhig */
@@ -1998,6 +2047,18 @@ function tapGroups(X, w, floor) {
 function envAt(X, hp, t0, t1) { const n = Math.floor((t1 - t0) / 2), o = new Float32Array(n); let j = lowerBound(X.t, t0) - 1; if (j < 0) j = 0;
   for (let i = 0; i < n; i++) { const t = t0 + 2 * i; while (j < X.t.length - 2 && X.t[j + 1] < t) j++; const a = X.t[j], b = X.t[j + 1] ?? a, f = b > a ? Math.min(1, Math.max(0, (t - a) / (b - a))) : 0; o[i] = Math.log1p(hp[j] * (1 - f) + (hp[j + 1] ?? hp[j]) * f); } return o; }
 function corr(a, b) { const n = Math.min(a.length, b.length); let ma = 0, mb = 0; for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; } ma /= n; mb /= n; let sab = 0, saa = 0, sbb = 0; for (let i = 0; i < n; i++) { const x = a[i] - ma, y = b[i] - mb; sab += x * y; saa += x * x; sbb += y * y; } return saa && sbb ? sab / Math.sqrt(saa * sbb) : 0; }
+/* Versatz aus den Klopfspitzen: Brustspitzen und Fußspitzen um die Live-Stelle paaren (je 60 ms), Median der Differenzen */
+function peakOff(gc, gf, h) {
+  const C = gc.filter(g => g[0] > h - 6000 && g[0] < h + 6000).flat(), Fp = gf.filter(g => g[0] > h - 7500 && g[0] < h + 7500).flat();
+  let best = null;
+  for (const c of C) for (const f of Fp) {
+    const o = c - f; if (Math.abs(o) > 1500) continue;
+    const d = []; C.forEach(x => { let m = null; Fp.forEach(y => { const e = x - (y + o); if (Math.abs(e) <= 60 && (m === null || Math.abs(e) < Math.abs(m))) m = e; }); if (m !== null) d.push(o + m); });
+    if (d.length >= 3) { d.sort((p, q) => p - q); const med = d[d.length >> 1], sp = d[d.length - 1] - d[0];
+      if (!best || d.length > best.n || (d.length === best.n && sp < best.sp)) best = { off: med, n: d.length, sp }; }
+  }
+  return best;
+}
 function tapSync(A, F, hints) {
   const gc = tapGroups(A, W(A, 0.3), 250), gf = tapGroups(F, W(F, 0.3), 1000), pairs = [];
   if (gc.length && F) {
@@ -2020,11 +2081,20 @@ function tapSync(A, F, hints) {
         for (let off = b.off - 4; off <= b.off + 4; off += 2) { const r = corr(ce, envAt(F, hf, t0 - off, t1 - off)); if (r > b.r) b = { off, r }; }
         if (b.r > best.r) best = b;
       }
-      if (best.r > 0.6) live.push({ t: h, off: best.off, r: best.r, n: "live", streu: null });
+      const pk = peakOff(gc, gf, h);
+      if (best.r > 0.6 && (!pk || Math.abs(pk.off - best.off) <= 80)) live.push({ t: h, off: best.off, r: best.r, n: "live", streu: null });
+      else if (pk && pk.n >= 3 && pk.sp <= 150) live.push({ t: h, off: pk.off, r: best.r, n: "live", streu: pk.sp, spitzen: pk.n });
     });
     /* bewusstes Klopfen hat Vorrang: gibt es Treffer an den Live-Stellen, zählen nur diese */
     if (live.length) { pairs.length = 0; pairs.push(...live); }
     pairs.sort((a, b) => a.t - b.t);
+  }
+  /* nur Paare behalten, die zu einer gemeinsamen Linie passen (Drift höchstens 150 ms pro Stunde, Abweichung höchstens 100 ms) */
+  if (pairs.length >= 2) {
+    let best = [pairs.reduce((a, b) => (b.r > a.r ? b : a))];
+    for (const p of pairs) for (const q of pairs) { if (q.t <= p.t) continue; const k = (q.off - p.off) / (q.t - p.t); if (Math.abs(k * 3600000) > 150) continue;
+      const inl = pairs.filter(x => Math.abs(x.off - (p.off + k * (x.t - p.t))) <= 100); if (inl.length > best.length) best = inl; }
+    if (best.length < pairs.length) { pairs.length = 0; pairs.push(...best); }
   }
   let fn = () => 0, drift = null;
   if (pairs.length === 1) fn = () => pairs[0].off;
@@ -2361,7 +2431,8 @@ async function buildSpar(D, stamp8) {
   let nZ = 0, lastZ = -1e15; rows.slice(1).forEach(r => { if (r[19] === "ja") { if (r[34] - lastZ >= 8000) nZ++; lastZ = r[34]; } });
   const nR = steps.filter(s => s.side === "R" && s.sicher).length, nL = steps.filter(s => s.side === "L" && s.sicher).length;
   const gyInfo = GY.length ? `${GY.length} Pakete, Format ${GY[0].ft}, Faktor ${GY[0].fo ?? "keiner"}` : "keine";
-  const KR = [["Feld", "Wert"], ["Version", "Messplayer 9"], ["Datei", stamp8], ["Beginn", dstamp(new Date(T0)) + " " + tx(T0)], ["T0_Epoch_ms", Math.round(T0)],
+  const KG = L.filter(r => r.typ === "Gewicht").map(r => parseFloat(r.name.replace(",", "."))).filter(Number.isFinite), KGv = KG.length ? KG[KG.length - 1] : null;
+  const KR = [["Feld", "Wert"], ["Version", "Messplayer 9.1"], ["Gewicht_kg", KGv], ["Datei", stamp8], ["Beginn", dstamp(new Date(T0)) + " " + tx(T0)], ["T0_Epoch_ms", Math.round(T0)],
     ["BigData", $("bigdata").checked ? "an" : "aus"], ["Herzschläge", B.length], ["davon im EKG bestätigt", R.length ? al.ok : "kein EKG"],
     ["Versatz Herzschlag-Zeit zu EKG ms", al.lag], ["Klopfgruppen Brust", sync.gc.length], ["Klopfgruppen Sense", sync.gf.length],
     ["Abgleich Sense zu Brust ms", sync.pairs.length ? sync.pairs.map(p => `${tx(p.t)}: ${Math.round(p.off)} (${p.n === "live" ? "Stelle aus der Live-Erkennung" : p.n + " Klopfer"}, Ähnlichkeit ${Math.round(p.r * 100) / 100})`).join(" | ") : "kein Abgleich gefunden"],
@@ -2394,7 +2465,7 @@ async function buildSpar(D, stamp8) {
     const a2 = a, b2 = g[g.length - 1] + 2000;
     fen.push({ art, start_ms: Math.round(a2 - T0), ende_ms: Math.round(b2 - T0), spitzen_ms: g.map(x => Math.round((x - T0) * 10) / 10), brust: cut(A, a2, b2, 3), fuss: cut(F, a2, b2, 3), drehrate: cut(G, a2, b2, 3), ekg: cut(E, a2, b2, 1) });
   });
-  const json = JSON.stringify({ version: "Messplayer 9", t0_epoch_ms: Math.round(T0), beginn: dstamp(new Date(T0)) + " " + tx(T0), zeit: "Millisekunden seit t0, Fuß und Drehrate auf Brustuhr korrigiert",
+  const json = JSON.stringify({ version: "Messplayer 9.1", gewicht_kg: KGv, t0_epoch_ms: Math.round(T0), beginn: dstamp(new Date(T0)) + " " + tx(T0), zeit: "Millisekunden seit t0, Fuß und Drehrate auf Brustuhr korrigiert",
     einheiten: { brust: "mg", fuss: "mg", drehrate: "Grad pro Sekunde", ekg: "Mikrovolt" },
     abgleich: { methode: "Korrelation der Klopfspuren, Fuß plus Versatz = Brust", paare: sync.pairs.map(p => ({ t_ms: Math.round(p.t - T0), versatz_ms: p.off, aehnlichkeit: Math.round(p.r * 100) / 100, klopfer: p.n })), drift_ms_pro_h: sync.drift },
     herzschlag_ekg_versatz_ms: al.lag, fenster: fen,
@@ -2502,7 +2573,11 @@ function detectActivities(mf, music) {
     if ((r.steps !== null && r.steps >= 50) || (r.fMAD !== null && r.fMAD > 300)) return "Gehen";
     if (r.gyro !== null && r.gyro >= 100 && r.fMAD >= 30 && r.fMAD < 300 && r.ang < 40 && (r.steps || 0) < 10) return "Radfahren";
     const carVib = r.vib >= 15 && r.vib <= 90 && (r.fvib === null || (r.fvib >= 15 && r.fvib <= 90));
-    if (r.up < 0.3 && r.lie < 0.3 && carVib && r.ang < (r.fvib === null ? 40 : 60)) return "Autofahren";
+    /* Auto: Brust und Fuß zittern gleich stark, der Fuß dreht sich kaum; ohne Fuß wie bisher über die Lage */
+    const vr = r.fvib !== null && r.vib ? r.fvib / r.vib : null;
+    const carOld = r.up < 0.3 && carVib && r.ang < (r.fvib === null ? 40 : 60);
+    const carNew = r.fvib !== null && r.vib >= 25 && r.vib <= 90 && r.fvib >= 25 && r.fvib <= 90 && vr >= 0.6 && vr <= 1.6 && (r.gyro === null || r.gyro < 10);
+    if (r.lie < 0.3 && (r.steps || 0) < 8 && (carOld || carNew)) return "Autofahren";
     if (d.getDay() === 4 && hm >= 18 * 60 + 45 && hm <= 22 * 60 + 15 && r.cMAD >= 10 && r.cMAD <= 150) return "Biodanza";
     if (r.lie >= 0.8 && r.cMAD < 8) return "Liegen";
     if (r.ang >= 40 && r.cMAD >= 8 && r.cMAD <= 80 && (r.fMAD === null || r.fMAD < 150) && (r.steps || 0) < 8) return "Yoga";
@@ -2687,8 +2762,8 @@ function report9(S) {
     src.forEach(q => { const K = klima.filter(k => k.q === q), cs = K.map(k => k.c).filter(Number.isFinite), ws = K.map(k => k.w).filter(Number.isFinite), hs = K.map(k => k.h).filter(Number.isFinite);
       d.col(40, 40, 40, true).text(40, y, `${q}: ${K.length} Werte, ${f1(Math.min(...cs))} bis ${f1(Math.max(...cs))} °C, Luftfeuchte ${f0(Math.min(...hs))} bis ${f0(Math.max(...hs))} %, WBGT geschätzt ${f1(Math.min(...ws))} bis ${f1(Math.max(...ws))}`, 8.5); y -= 12; }); }
   d.col(120, 120, 120, true).text(40, 60, "WBGT geschätzt aus Temperatur und Luftfeuchte (Feuchttemperatur nach Stull, Kugeltemperatur gleich Thermometer), etwa ±2 Punkte.", 7)
-    .text(40, 50, "Puls Min–Max: 5 bis 95 Prozent der Schläge. RMSSD aus EKG-bestätigten Schlägen. Bewegung: mittlere Abweichung des Beschleunigungsbetrags je 5 s.", 7)
-    .text(40, 40, "Messplayer 9. Uhrzeiten in Ortszeit.", 7);
+    .text(40, 50, "Puls Min–Max: 5 bis 95 Prozent der Schläge. RMSSD aus allen plausiblen Abständen. Bewegung: mittlere Abweichung des Beschleunigungsbetrags je 5 s.", 7)
+    .text(40, 40, "Messplayer 9.1. Uhrzeiten in Ortszeit.", 7);
   /* Seite 2: Verläufe */
   d.page().col(20, 20, 20, true).text(40, 800, "Verlauf", 16, true);
   const L = 70, Wd = 490;
@@ -2704,6 +2779,7 @@ function report9(S) {
     B.forEach((m, i) => { if (i && m.t - B[i - 1].t > 120000) flush(); run.push(m); }); flush();
     let seg = []; const fl2 = () => { if (seg.length > 1) d.lw(1.2).col(...blue, false).poly(seg); seg = []; };
     P.forEach((m, i) => { if (i && m.t - P[i - 1].t > 120000) fl2(); seg.push([c.X(m.t + 30000), c.Y(m.puls)]); }); fl2(); }
+  const K0 = klima.some(k => k.t >= T0 - 600000 && k.t <= T1 + 600000);
   { const K = klima.filter(k => k.t >= T0 - 600000 && k.t <= T1 + 600000);
     if (K.length) { const vs = K.flatMap(k => [k.c, k.w]).filter(Number.isFinite), lo = Math.floor(Math.min(...vs)) - 1, hi = Math.ceil(Math.max(...vs)) + 1, st = hi - lo > 20 ? 5 : 2;
       const yt = []; for (let v = Math.ceil(lo / st) * st; v <= hi; v += st) yt.push(v);
@@ -2712,12 +2788,12 @@ function report9(S) {
         d.lw(1.3).col(...cl[i % 4], false).poly(Q.filter(k => Number.isFinite(k.c)).map(k => [cx(k.t), c.Y(k.c)]));
         d.dash(true).lw(1).poly(Q.filter(k => Number.isFinite(k.w)).map(k => [cx(k.t), c.Y(k.w)])).dash(false);
         d.col(...cl[i % 4], true).text(L + Wd - 150, 500 - 10 * i, q, 7); }); }
-    else d.col(120, 120, 120, true).text(L, 440, "Keine Temperaturwerte.", 9); }
+    else d.col(120, 120, 120, true).text(L, 530, "Keine Temperaturwerte in dieser Aufzeichnung.", 8); }
   { const A = minutes.filter(m => Number.isFinite(m.atem));
-    const c = pdfChart(d, { x: L, y: 220, w: Wd, h: 110 }, { title: "Atemzug je Minute (Median, s)", xr: [T0, T1], yr: [0, 20], xt, xf: hr, yt: [0, 5, 10, 15, 20] });
+    const c = pdfChart(d, { x: L, y: K0 ? 220 : 340, w: Wd, h: K0 ? 110 : 150 }, { title: "Atemzug je Minute (Median, s)", xr: [T0, T1], yr: [0, 20], xt, xf: hr, yt: [0, 5, 10, 15, 20] });
     A.forEach(m => d.col(...green, true).rect(c.X(m.t + 30000) - 1, c.Y(m.atem) - 1, 2, 2)); }
   { const M = minutes.filter(m => Number.isFinite(m.cmad)), vs = M.flatMap(m => [m.cmad, m.fmad]).filter(Number.isFinite), hi = Math.max(20, Math.ceil(Math.min(Math.max(...vs, 20), 300) / 20) * 20);
-    const c = pdfChart(d, { x: L, y: 70, w: Wd, h: 100 }, { title: "Bewegung je Minute (MAD, mg): Brust dunkel, Fuß hell", xr: [T0, T1], yr: [0, hi], xt, xf: hr, yt: [0, hi / 2, hi] });
+    const c = pdfChart(d, { x: L, y: K0 ? 70 : 120, w: Wd, h: K0 ? 100 : 150 }, { title: "Bewegung je Minute (MAD, mg): Brust dunkel, Fuß hell", xr: [T0, T1], yr: [0, hi], xt, xf: hr, yt: [0, hi / 2, hi] });
     d.lw(1).col(150, 200, 175, false).poly(M.filter(m => Number.isFinite(m.fmad)).map(m => [c.X(m.t + 30000), c.Y(m.fmad)]));
     d.lw(1.2).col(...grey.map(v => v - 80), false).poly(M.map(m => [c.X(m.t + 30000), c.Y(m.cmad)])); }
   return d.bytes();
@@ -2749,13 +2825,13 @@ async function extras9(X) {
   const statsOf = (a, b) => {
     const P = []; for (let i = 0; i < env.t.length; i++) if (env.ok[i] && env.t[i] >= a && env.t[i] < b) P.push(env.p[i]);
     P.sort((x, y) => x - y); const q = p => P.length ? P[Math.min(P.length - 1, Math.floor(p * P.length))] : null;
-    const D = []; for (let i = 1; i < B.length; i++) { const x = B[i], y = B[i - 1]; if (x.tt >= a && x.tt < b && x.rre && y.rre && Math.abs(x.rre - y.rre) < 300) D.push(x.rre - y.rre); }
+    const D = []; for (let i = 1; i < B.length; i++) { const x = B[i], y = B[i - 1]; if (x.tt >= a && x.tt < b && x.tt - y.tt < 2500 && x.rr >= 300 && x.rr <= 2000 && y.rr >= 300 && y.rr <= 2000 && Math.abs(x.rr - y.rr) < 0.2 * y.rr) D.push(x.rr - y.rr); }
     const med = v => { v = v.filter(Number.isFinite).sort((x, y) => x - y); return v.length ? v[v.length >> 1] : null; };
     const M = minutes.filter(m => m.t >= a && m.t < b), K = klima.filter(k => k.t >= a && k.t < b && k.q === (klima.find(z => z.q === "Thermometer 1") ? "Thermometer 1" : klima[0]?.q));
     const avg = v => { v = v.filter(Number.isFinite); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
     const KA = klima.filter(k => k.t >= a && k.t < b);
     return { puls: avg(P), p5: q(0.05), p95: q(0.95), rmssd: D.length > 20 ? Math.sqrt(D.reduce((s, x) => s + x * x, 0) / D.length) : null,
-      atem: med(breaths.filter(c => c.t >= a && c.t < b && (c.quelle !== "Brust" || c.sicher)).map(c => c.dauer)), cmad: med(M.map(m => m.cmad)), fmad: med(M.map(m => m.fmad)),
+      atem: (() => { const Bb = breaths.filter(c => c.t >= a && c.t < b && c.quelle === "Brust" && c.sicher); return Bb.length >= 20 ? med(Bb.map(c => c.dauer)) : med(breaths.filter(c => c.t >= a && c.t < b && (c.quelle !== "Brust" || c.sicher)).map(c => c.dauer)); })(), cmad: med(M.map(m => m.cmad)), fmad: med(M.map(m => m.fmad)),
       temp: avg(K.map(k => k.c)), wbgt: avg(K.map(k => k.w)), tmin: KA.length ? Math.min(...KA.map(k => k.c)) : null, tmax: KA.length ? Math.max(...KA.map(k => k.c)) : null,
       wmin: KA.filter(k => Number.isFinite(k.w)).length ? Math.min(...KA.filter(k => Number.isFinite(k.w)).map(k => k.w)) : null, wmax: KA.filter(k => Number.isFinite(k.w)).length ? Math.max(...KA.filter(k => Number.isFinite(k.w)).map(k => k.w)) : null };
   };
@@ -2800,7 +2876,7 @@ async function extras9(X) {
     atem: breaths.map(c => ({ t: rel(c.t), dauer: c.dauer, ein: c.ein, aus: c.aus, quelle: c.quelle, sicher: !!c.sicher })),
     schritte: steps.map(s => ({ t: rel(s.t), seite: s.side, sicher: !!s.sicher })),
     klima: klima.map(k => ({ t: rel(k.t), quelle: k.q, c: Math.round(k.c * 100) / 100, h: k.h === null ? null : Math.round(k.h * 10) / 10, wbgt: k.w === null ? null : Math.round(k.w * 10) / 10, p: k.p === null ? null : Math.round(k.p * 10) / 10 })),
-    protokoll: ev.filter(r => ["Stück", "Tätigkeit", "Marker", "Notiz", "Testabschnitt", "Abgleich", "Akku", "Einschlafen", "Atemhilfe"].includes(r.typ)).map(r => ({ t: rel(r.start), ende: r.end ? rel(r.end) : null, typ: r.typ, name: r.name })),
+    protokoll: ev.filter(r => ["Stück", "Tätigkeit", "Marker", "Notiz", "Testabschnitt", "Abgleich", "Akku", "Einschlafen", "Atemhilfe", "Gefühl", "Gewicht", "Trageort", "Bildschirm"].includes(r.typ)).map(r => ({ t: rel(r.start), ende: r.end ? rel(r.end) : null, typ: r.typ, name: r.name })),
     taetigkeiten_auto: act.blocks.map(b => ({ start_ms: rel(b.a), ende_ms: rel(b.b), name: b.name, sicherheit: b.sicher, grund: b.grund })),
     akku: BA.map(b => ({ t: rel(b.t), geraet: b.d, wert: b.txt })),
     strom };
@@ -2947,12 +3023,41 @@ async function buildZip() {
   const blob = await makeZip8(out);
   return { blob, name: "Messdaten9_" + id + ".zip", list: out.map(f => f.name).join(", ") };
 }
+/* Ordner merken: Handle in eigener IndexedDB, je Player ein Ordner (Tagesdaten oder Nachtdaten) */
+const ORD = { key: () => (window.NACHTPLAYER ? "nacht" : "tag"), name: () => (window.NACHTPLAYER ? "Nachtdaten" : "Tagesdaten") };
+function ordDb() { return new Promise((res, rej) => { const r = indexedDB.open("ordner", 1); r.onupgradeneeded = () => r.result.createObjectStore("h"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function ordGet() { try { const db = await ordDb(); return await new Promise(res => { const q = db.transaction("h").objectStore("h").get(ORD.key()); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); }); } catch (e) { return null; } }
+async function ordSet(h) { try { const db = await ordDb(); await new Promise(res => { const t = db.transaction("h", "readwrite"); t.objectStore("h").put(h, ORD.key()); t.oncomplete = res; t.onerror = res; }); } catch (e) {} }
+/* im Klick aufrufen (Nutzergeste): gemerkten Ordner freigeben lassen oder neu wählen */
+async function ordReady(neu) {
+  if (!("showDirectoryPicker" in window)) return null;
+  try {
+    let h = neu ? null : await ordGet();
+    if (h) { let p = await h.queryPermission({ mode: "readwrite" }); if (p !== "granted") p = await h.requestPermission({ mode: "readwrite" }); if (p === "granted") return h; }
+    h = await window.showDirectoryPicker({ id: "messplayer_" + ORD.key(), mode: "readwrite", startIn: "documents" });
+    await ordSet(h); return h;
+  } catch (e) { return null; }
+}
+async function ordWrite(h, sub, name, data) { const d = await h.getDirectoryHandle(sub, { create: true }); const f = await d.getFileHandle(name, { create: true }); const w = await f.createWritable(); await w.write(data); await w.close(); }
 $("saveall").addEventListener("click", async () => {
-  const z = await buildZip(), a = document.createElement("a");
+  const h = await ordReady(false);
+  const z = await buildZip();
+  if (h) {
+    try {
+      await ordWrite(h, "ZIP", z.name, z.blob);
+      if (z.kern) await ordWrite(h, "Kern", z.kern.name, z.kern.data);
+      $("savestatus").textContent = `Gespeichert im Ordner „${h.name}“: ZIP/${z.name}${z.kern ? ", Kern/" + z.kern.name : ""} (${(z.blob.size / 1e6).toFixed(1)} MB).`;
+      addEntry({ typ: "Daten", name: `Im Ordner ${h.name} gespeichert: ${z.name}`, start: Date.now() }); flush();
+      return;
+    } catch (e) { addEntry({ typ: "Fehler", name: "Speichern im Ordner fehlgeschlagen: " + (e.message || e), start: Date.now() }); }
+  }
+  const a = document.createElement("a");
   a.href = URL.createObjectURL(z.blob); a.download = z.name;
   document.body.appendChild(a); a.click(); a.remove();
-  $("savestatus").textContent = `Gespeichert: ${z.list} (${(z.blob.size / 1e6).toFixed(1)} MB). Die Datei liegt in den Downloads.`;
+  if (z.kern) { const k = document.createElement("a"); k.href = URL.createObjectURL(new Blob([z.kern.data])); k.download = z.kern.name; document.body.appendChild(k); setTimeout(() => { k.click(); k.remove(); }, 800); }
+  $("savestatus").textContent = `Gespeichert: ${z.list} (${(z.blob.size / 1e6).toFixed(1)} MB). Die Datei liegt in den Downloads.` + ("showDirectoryPicker" in window ? "" : " Ordnerzugriff nicht verfügbar: Chrome aktualisieren für einen eigenen Ordner.");
 });
+$("ordnew").addEventListener("click", async () => { const h = await ordReady(true); $("savestatus").textContent = h ? `Speicherordner: ${h.name}` : ("showDirectoryPicker" in window ? "Kein Ordner gewählt, es wird in Downloads gespeichert." : "Ordnerzugriff nicht verfügbar: Chrome aktualisieren für einen eigenen Ordner."); });
 let shareFile = null;
 async function doShare() {
   try {
