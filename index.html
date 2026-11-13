@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Biodanza Messplayer 9.3</title>
+<title>Biodanza Messplayer 9.4</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 680px; margin: 1.5rem auto; padding: 0 1rem; color: #222; background: #fafaf7; line-height: 1.5; }
   h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 0.2rem; }
@@ -48,7 +48,7 @@
 </style>
 </head>
 <body>
-<h1>Biodanza Messplayer 9.3</h1>
+<h1>Biodanza Messplayer 9.4</h1>
 <div class="hint">Herz, Atmung, Bewegung, Klangumgebung und Musik mit derselben Uhr. Gurt, Mikrofon und Musik laufen unabhängig voneinander.</div>
 
 <button class="main" id="master" disabled>Noch keine Aufzeichnung aktiv</button>
@@ -124,6 +124,10 @@
   <legend>Testablauf Gehen</legend>
   <label><input type="checkbox" id="testab"> Testablauf aktiv</label>
   <div class="hint">Ab dem Einschalten gilt alles als Anweg. Am Testort Vor drücken: 2 Minuten ohne Musik, dann startet die Musik (Durchgang 1, der Block aus den Einstellungen). Danach Durchgang 2 mit Atemhilfe, dann 2 Minuten Auslaufen und die Ansage „Ende des Tests“. Der Rückweg gilt als Abweg.</div>
+  <label>Reihenfolge der Durchgänge: <select id="testord"><option value="zufall">zufällig</option><option value="ohne">ohne Atemhilfe zuerst</option><option value="mit">mit Atemhilfe zuerst</option></select></label>
+  <label><input type="checkbox" id="testmix" checked> Stücke in jedem Durchgang mischen</label>
+  <label>Versuchsort: <select id="testort"><option>Turnhalle</option><option>Parkplatz</option><option value="frei">anderer Ort (Freitext)</option></select></label>
+  <input id="testortfrei" type="text" placeholder="Ort eingeben" style="display:none;width:100%">
   <button id="teststart">Testablauf jetzt starten (wie Taste Vor)</button>
   <div id="teststatus" class="stat"></div>
 </fieldset>
@@ -476,7 +480,7 @@ function next() {
     p = PIECES.find(x => x.key === CALM[calmIdx % CALM.length]); calmIdx++;
     current = { typ: "Stück", block: "Schlaf", pos: calmIdx, name: p.base || p.name, start: null, end: null, rep: 1, reps: 1 };
   } else {
-    const order = orderOf(blockNo);
+    const order = test && test.mix ? testOrder(blockNo) : orderOf(blockNo);
     if (pos >= order.length) { if (testBlockEnd()) return; blockNo++; pos = 0; return next(); }
     p = order[pos];
     current = { typ: "Stück", block: blockNo, pos: pos + 1, name: p.base || p.name, start: null, end: null, rep: 1, reps: p.reps || 1 };
@@ -1929,20 +1933,37 @@ function testShow() {
   $("teststatus").textContent = `Abschnitt: ${test.ph} seit ${Math.floor(el / 60)}:${pad(el % 60)}`;
 }
 function testSet(ph, msg) { test.ph = ph; test.t = Date.now(); addEntry({ typ: "Testabschnitt", name: ph, start: test.t }); if (msg) say(msg); testShow(); flush(); }
+/* 9.4: Reihenfolge der Durchgänge zufällig oder fest, Stücke gemischt, Versuchsort */
+function testOrt() { const v = $("testort").value; return v === "frei" ? ($("testortfrei").value.trim() || "anderer Ort") : v; }
+function testOrder(b) {
+  if (!test || !test.mix) return orderOf(b);
+  if (!test.ord[b]) { const o = orderOf(b).slice(); for (let i = o.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [o[i], o[j]] = [o[j], o[i]]; } test.ord[b] = o;
+    addEntry({ typ: "Testablauf", name: `Reihenfolge Block ${b}: ` + o.map(p => p.base || p.name).join(", "), start: Date.now() }); }
+  return test.ord[b];
+}
 function testStart() {
   if (test) return;
   if (!musicReady()) { say("Musikdateien fehlen"); return; }
   if (running) stopMusic("Musik für den Testablauf beendet");
-  test = { ph: "", t: Date.now() };
+  const w = $("testord").value, mitZuerst = w === "mit" ? true : w === "ohne" ? false : Math.random() < 0.5;
+  test = { ph: "", t: Date.now(), mitZuerst, mix: $("testmix").checked, ord: {} };
+  addEntry({ typ: "Testablauf", name: `Versuchsort: ${testOrt()}`, start: Date.now() });
+  addEntry({ typ: "Testablauf", name: `Reihenfolge: ${mitZuerst ? "mit Atemhilfe zuerst" : "ohne Atemhilfe zuerst"} (${w === "zufall" ? "zufällig" : "fest"}), Stücke ${test.mix ? "gemischt" : "in fester Folge"}`, start: Date.now() });
   testSet("Ohne Musik", "Test beginnt. Zwei Minuten ohne Musik.");
+}
+function testD1() {
+  if (!running) startMusic(); test.d1 = Date.now();
+  if (test.mitZuerst) { const T = atemTimes(Date.now() - 300000, Date.now()); testSet("Durchgang 1 mit Atemhilfe", "Musik an. Durchgang eins mit Atemhilfe."); bStartWith(T); }
+  else testSet("Durchgang 1 ohne Atemhilfe", "Musik an. Durchgang eins.");
 }
 function testBlockEnd() {
   if (!test) return false;
-  if (test.ph === "Durchgang 1") {
-    const T = atemTimes(test.d1, Date.now());
-    testSet("Durchgang 2 mit Atem", "Durchgang zwei mit Atemhilfe."); bStartWith(T); return false;
+  if (test.ph.startsWith("Durchgang 1")) {
+    if (test.mitZuerst) { bOff(); testSet("Durchgang 2 ohne Atemhilfe", "Durchgang zwei ohne Atemhilfe."); }
+    else { const T = atemTimes(test.d1, Date.now()); testSet("Durchgang 2 mit Atemhilfe", "Durchgang zwei mit Atemhilfe."); bStartWith(T); }
+    return false;
   }
-  if (test.ph === "Durchgang 2 mit Atem") {
+  if (test.ph.startsWith("Durchgang 2")) {
     setTimeout(() => { stopMusic(); bOff(); testSet("Auslaufen", "Auslaufen, zwei Minuten."); }, 0); return true;
   }
   return false;
@@ -1950,7 +1971,7 @@ function testBlockEnd() {
 setInterval(() => {
   if (!test) return;
   const el = Date.now() - test.t;
-  if (test.ph === "Ohne Musik" && el >= 120000) { if (!running) startMusic(); test.d1 = Date.now(); testSet("Durchgang 1", "Musik an. Durchgang eins."); }
+  if (test.ph === "Ohne Musik" && el >= 120000) testD1();
   else if (test.ph === "Auslaufen" && el >= 120000) testSet("Abweg", "Ende des Tests.");
   testShow();
 }, 1000);
@@ -1959,6 +1980,9 @@ $("testab").addEventListener("change", () => {
   else { if (test) addEntry({ typ: "Testabschnitt", name: "Testablauf beendet", start: Date.now() }); test = null; }
   testShow(); flush();
 });
+{ try { ["testord", "testort"].forEach(id => { const v = localStorage.getItem("mp_" + id); if (v) $(id).value = v; }); $("testmix").checked = localStorage.getItem("mp_testmix") !== "0"; $("testortfrei").value = localStorage.getItem("mp_testortfrei") || ""; } catch (e) {}
+  const sv = () => { try { localStorage.setItem("mp_testord", $("testord").value); localStorage.setItem("mp_testort", $("testort").value); localStorage.setItem("mp_testmix", $("testmix").checked ? "1" : "0"); localStorage.setItem("mp_testortfrei", $("testortfrei").value); } catch (e) {} $("testortfrei").style.display = $("testort").value === "frei" ? "block" : "none"; };
+  ["testord", "testort", "testmix", "testortfrei"].forEach(id => $(id).addEventListener("change", sv)); setTimeout(sv, 0); }
 $("teststart").addEventListener("click", () => { if (!$("testab").checked) { $("testab").checked = true; $("testab").dispatchEvent(new Event("change")); } testStart(); });
 
 /* Klopfabgleich live: grob aus der Ankunftszeit, genau rechnet der Export */
@@ -2646,7 +2670,7 @@ async function buildSpar(D, stamp8) {
   const nR = steps.filter(s => s.side === "R" && s.sicher).length, nL = steps.filter(s => s.side === "L" && s.sicher).length;
   const gyInfo = GY.length ? `${GY.length} Pakete, Format ${GY[0].ft}, Faktor ${GY[0].fo ?? "keiner"}` : "keine";
   const KG = L.filter(r => r.typ === "Gewicht").map(r => parseFloat(r.name.replace(",", "."))).filter(Number.isFinite), KGv = KG.length ? KG[KG.length - 1] : null;
-  const KR = [["Feld", "Wert"], ["Version", "Messplayer 9.3"], ["Gewicht_kg", KGv], ["Datei", stamp8], ["Beginn", dstamp(new Date(T0)) + " " + tx(T0)], ["T0_Epoch_ms", Math.round(T0)],
+  const KR = [["Feld", "Wert"], ["Version", "Messplayer 9.4"], ["Gewicht_kg", KGv], ["Datei", stamp8], ["Beginn", dstamp(new Date(T0)) + " " + tx(T0)], ["T0_Epoch_ms", Math.round(T0)],
     ["BigData", $("bigdata").checked ? "an" : "aus"], ["Herzschläge", B.length], ["davon im EKG bestätigt", R.length ? al.ok : "kein EKG"],
     ["Versatz Herzschlag-Zeit zu EKG ms", al.lag], ["Klopfgruppen Brust", sync.gc.length], ["Klopfgruppen Sense", sync.gf.length],
     ["Abgleich Sense zu Brust ms", sync.pairs.length ? sync.pairs.map(p => `${tx(p.t)}: ${Math.round(p.off)} (${p.n === "live" ? "Stelle aus der Live-Erkennung" : p.n + " Klopfer"}, Ähnlichkeit ${Math.round(p.r * 100) / 100})`).join(" | ") : "kein Abgleich gefunden"],
@@ -2683,7 +2707,7 @@ async function buildSpar(D, stamp8) {
   /* 9.3: Rohfenster nach jeder Aufforderung zum Klopfen (60 s), auch ohne Erkennung, damit Fehlschläge prüfbar sind */
   L.filter(r => r.typ === "Abgleich" && /offen/.test(r.name)).forEach(r => { const a2 = r.start, b2 = r.start + 60000;
     fen.push({ art: "Klopfaufforderung " + r.name.replace("Abgleich offen: ", ""), start_ms: Math.round(a2 - T0), ende_ms: Math.round(b2 - T0), spitzen_ms: [], brust: cut(A, a2, b2, 3), fuss: cut(SA, a2, b2, 3) }); });
-  const json = JSON.stringify({ version: "Messplayer 9.3", gewicht_kg: KGv, t0_epoch_ms: Math.round(T0), beginn: dstamp(new Date(T0)) + " " + tx(T0), zeit: "Millisekunden seit t0, Fuß und Drehrate auf Brustuhr korrigiert",
+  const json = JSON.stringify({ version: "Messplayer 9.4", gewicht_kg: KGv, t0_epoch_ms: Math.round(T0), beginn: dstamp(new Date(T0)) + " " + tx(T0), zeit: "Millisekunden seit t0, Fuß und Drehrate auf Brustuhr korrigiert",
     einheiten: { brust: "mg", fuss: "mg", drehrate: "Grad pro Sekunde", ekg: "Mikrovolt" },
     abgleich: { methode: "Korrelation der Klopfspuren, Fuß plus Versatz = Brust", paare: sync.pairs.map(p => ({ t_ms: Math.round(p.t - T0), versatz_ms: p.off, aehnlichkeit: Math.round(p.r * 100) / 100, klopfer: p.n, verfahren: p.art || "Korrelation", streuung_ms: p.streu ?? null, treffer: p.treffer ?? null })), drift_ms_pro_h: sync.drift },
     herzschlag_ekg_versatz_ms: al.lag, fenster: fen,
@@ -2973,7 +2997,7 @@ const ACT_COL = { "Gehen": [27, 170, 122], "Autofahren": [120, 120, 120], "Radfa
 function actCol(n) { return ACT_COL[n] || (/^Yoga/.test(n) ? ACT_COL.Yoga : [180, 180, 180]); }
 function report9(S) {
   const d = pdfDoc(), blue = [42, 120, 214], orange = [235, 104, 52], green = [27, 170, 122], purple = [138, 79, 208], grey = [150, 150, 150];
-  const { T0, T1, minutes, blocks, klima, stats, title } = S;
+  const { T0, T1, minutes, blocks, klima, stats, title, tt } = S;
   const hr = v => { const t = new Date(v); return String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0"); };
   const span = T1 - T0, step = span > 6 * 3600000 ? 3600000 : span > 2 * 3600000 ? 1800000 : 900000;
   const xt = []; { const s = new Date(T0); s.setMinutes(0, 0, 0); for (let v = s.getTime(); v <= T1; v += step) if (v >= T0) xt.push(v); }
@@ -3001,7 +3025,7 @@ function report9(S) {
       d.col(40, 40, 40, true).text(40, y, `${q}: ${K.length} Werte, ${f1(Math.min(...cs))} bis ${f1(Math.max(...cs))} °C, Luftfeuchte ${f0(Math.min(...hs))} bis ${f0(Math.max(...hs))} %` + (ws.length ? `, WBGT geschätzt ${f1(Math.min(...ws))} bis ${f1(Math.max(...ws))}` : (/Haut/.test(q) ? " (am Körper, Hauttemperatur, keine WBGT)" : "")), 8.5); y -= 12; }); }
   d.col(120, 120, 120, true).text(40, 60, "WBGT geschätzt aus Temperatur und Luftfeuchte (Feuchttemperatur nach Stull, Kugeltemperatur gleich Thermometer), etwa ±2 Punkte.", 7)
     .text(40, 50, "Puls Min–Max: 5 bis 95 Prozent der Schläge. RMSSD aus allen plausiblen Abständen. Plausibel: im EKG bestätigt oder kein einzelner Ausreißer. Bewegung: mittlere Abweichung des Beschleunigungsbetrags je 5 s.", 7)
-    .text(40, 40, "Messplayer 9.3. Uhrzeiten in Ortszeit.", 7);
+    .text(40, 40, "Messplayer 9.4. Uhrzeiten in Ortszeit.", 7);
   /* Seite 2: Verläufe */
   d.page().col(20, 20, 20, true).text(40, 800, "Verlauf", 16, true);
   const L = 70, Wd = 490;
@@ -3053,7 +3077,53 @@ function report9(S) {
       (blocks.length ? blocks : [{ name: "ganze Aufzeichnung", a: T0, b: T1 }]).forEach(b => { const Q = H.filter(k => k.t >= b.a && k.t < b.b); let up = 0, dn = 0; for (let i = 1; i < Q.length; i++) { const x = Q[i].hm - Q[i - 1].hm; if (x > 0) up += x; else dn -= x; }
         if (Q.length > 1) { d.col(40, 40, 40, true).text(40, yy, `${b.name} ${hr(b.a)}–${hr(b.b)}: ${f0(up)} m hinauf, ${f0(dn)} m hinunter`, 8.5); yy -= 12; } });
     } }
+  /* 9.4: Seite Testablauf */
+  if (tt && tt.ab.length) {
+    d.page().col(20, 20, 20, true).text(40, 800, "Testablauf", 16, true);
+    d.col(60, 60, 60, true).text(40, 782, `Versuchsort: ${tt.ort || "nicht angegeben"}. Reihenfolge: ${tt.reihe}.`, 9.5)
+      .text(40, 768, `Anteil im Atemband: Anteil der Pulsschwankung zwischen ${f1(tt.lo * 60)} und ${f1(tt.hi * 60)} pro Minute${tt.fA ? ` (Atemhilfe ${f1(tt.fA * 60)} Züge pro Minute)` : ""}.`, 8.5);
+    let y = 744; const C = [[40, "Abschnitt"], [190, "Beginn"], [228, "min"], [256, "Puls"], [288, "RMSSD"], [326, "Schritte"], [370, "Höhe"], [420, "Atemband"], [478, "Schwingung"]];
+    const row = (v, b) => { C.forEach(([x], i) => d.col(30, 30, 30, true).text(x, y, String(v[i] ?? "").slice(0, i ? 12 : 30), 8, b)); y -= 12; };
+    row(C.map(c => c[1]), true); d.lw(0.4).col(200, 200, 200, false).line(40, y + 8, 575, y + 8);
+    tt.ab.forEach(x => row([x.name, hr(x.a), f1(x.min), f0(x.pu), f1(x.rmssd), f0(x.sp), `+${f0(x.up)}/−${f0(x.dn)}`, x.band === null ? "" : f0(x.band * 100) + " %", x.peak === null ? "" : f1(x.peak) + "/min"]));
+    y -= 14; d.col(20, 20, 20, true).text(40, y, "Stücke", 11, true); y -= 14; row(["Stück (Durchgang)", "Beginn", "min", "Puls", "RMSSD", "Schritte", "Höhe", "", ""], true);
+    tt.stk.forEach(x => { if (y < 60) return; row([`${x.name} (${x.durchgang.replace(/^Durchgang /, "D")})`, hr(x.a), f1(x.min), f0(x.pu), f1(x.rmssd), f0(x.sp), `+${f0(x.up)}/−${f0(x.dn)}`, "", ""]); });
+  }
   return d.bytes();
+}
+
+
+/* 9.4: Auswertung des Testablaufs je Durchgang und je Stück */
+function testTables(ev, B, steps, klima, T1) {
+  const TA = ev.filter(r => r.typ === "Testabschnitt").sort((a, b) => a.start - b.start); if (!TA.some(r => /^Durchgang/.test(r.name))) return null;
+  const ortE = ev.filter(r => r.typ === "Testablauf" && /^Versuchsort/.test(r.name)).pop(), reiE = ev.filter(r => r.typ === "Testablauf" && /^Reihenfolge:/.test(r.name)).pop();
+  const ort = ortE ? ortE.name.replace("Versuchsort: ", "") : "", reihe = reiE ? reiE.name.replace("Reihenfolge: ", "") : "ohne Atemhilfe zuerst (alter Ablauf)";
+  const aE = ev.filter(r => r.typ === "Atemhilfe" && /^an/.test(r.name)).pop(); let fA = null;
+  if (aE) { const n = (aE.name.match(/\d+,\d/g) || []).map(x => parseFloat(x.replace(",", "."))); const per = n.slice(0, 4).reduce((s, x) => s + x, 0); if (per > 2) fA = 1 / per; }
+  const lo = fA ? Math.max(0.04, fA - 0.03) : 0.08, hi = fA ? fA + 0.03 : 0.14;
+  const H = klima.filter(k => Number.isFinite(k.hm)).sort((a, b) => a.t - b.t);
+  const st = (a, b) => {
+    const bb = B.filter(x => x.tt >= a && x.tt < b && x.rr > 300 && x.rr < 2000); if (bb.length < 20) return null;
+    const rr = bb.map(x => x.rr), pu = 60000 / (rr.reduce((s, x) => s + x, 0) / rr.length);
+    const D = []; for (let i = 1; i < bb.length; i++) { const d = bb[i].rr - bb[i - 1].rr; if (bb[i].tt - bb[i - 1].tt < 2500 && Math.abs(d) < 0.2 * bb[i - 1].rr) D.push(d); }
+    const rmssd = D.length > 10 ? Math.sqrt(D.reduce((s, x) => s + x * x, 0) / D.length) : null;
+    const sp = steps.filter(s => s.t >= a && s.t < b).length / ((b - a) / 60000);
+    const Q = H.filter(k => k.t >= a - 30000 && k.t < b + 30000); let up = 0, dn = 0; for (let i = 1; i < Q.length; i++) { const x = Q[i].hm - Q[i - 1].hm; if (x > 0) up += x; else dn -= x; }
+    let band = null, peak = null;
+    if (b - a >= 120000) {
+      const g = [], t0 = bb[0].tt; let k = 0; for (let t = t0; t < bb[bb.length - 1].tt; t += 250) { while (k < bb.length - 2 && bb[k + 1].tt < t) k++; const f = (t - bb[k].tt) / Math.max(1, bb[k + 1].tt - bb[k].tt); g.push(60000 / bb[k].rr * (1 - f) + 60000 / bb[k + 1].rr * f); }
+      const n = g.length, mx = g.reduce((s, x) => s + x, 0) / n, tx = g.map((x, i) => i - (n - 1) / 2), sxx = tx.reduce((s, x) => s + x * x, 0), sl = tx.reduce((s, x, i) => s + x * (g[i] - mx), 0) / sxx, y = g.map((x, i) => x - mx - sl * tx[i]);
+      const L = Math.min(480, n), step = L / 2, F = []; for (let f = 0.04; f <= 0.5001; f += 1 / 120) F.push(f); const P = F.map(() => 0);
+      for (let s0 = 0; s0 + L <= n; s0 += step) F.forEach((f, j) => { let re = 0, im = 0; for (let i = 0; i < L; i++) { const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (L - 1)), v = y[s0 + i] * w, ph = 2 * Math.PI * f * i / 4; re += v * Math.cos(ph); im += v * Math.sin(ph); } P[j] += re * re + im * im; });
+      const tot = P.reduce((s, x) => s + x, 0); if (tot > 0) { band = F.reduce((s, f, j) => s + (f >= lo && f <= hi ? P[j] : 0), 0) / tot; let jm = 0; P.forEach((x, j) => { if (x > P[jm]) jm = j; }); peak = F[jm] * 60; }
+    }
+    return { pu, rmssd, sp, up, dn, band, peak, min: (b - a) / 60000 };
+  };
+  const ab = [], stk = [];
+  TA.forEach((r, i) => { const b = i + 1 < TA.length ? TA[i + 1].start : T1; if (b - r.start < 30000 || /beendet/.test(r.name)) return; const s = st(r.start, b); if (s) ab.push(Object.assign({ name: r.name, a: r.start, b }, s)); });
+  const dg = ab.filter(x => /^Durchgang/.test(x.name));
+  ev.filter(r => r.typ === "Stück" && r.end && r.end - r.start >= 40000).forEach(r => { const d = dg.find(x => r.start >= x.a && r.start < x.b); if (!d) return; const s = st(r.start, r.end); if (s) stk.push(Object.assign({ name: r.name, durchgang: d.name, a: r.start, b: r.end }, s)); });
+  return { ort, reihe, fA, lo, hi, ab, stk };
 }
 
 /* ---------- alles für Version 9 aus den fertigen Zeitreihen ---------- */
@@ -3096,6 +3166,11 @@ async function extras9(X) {
   };
   act.blocks.forEach(b => { b.st = statsOf(b.a, b.b); if (/Gehen|Laufen|Joggen/.test(b.name)) { b.st.atem = null; b.st.atemGehen = true; } });
   const ganz = statsOf(T0, T1 + 1);
+  let TT9 = null; try { TT9 = testTables(ev, B, steps, klima, T1); } catch (e) { TT9 = null; }
+  window.lastVersuche = null;
+  if (TT9) { const r1 = v => v === null || v === undefined || !Number.isFinite(v) ? "" : String(Math.round(v * 10) / 10).replace(".", ","), dt = new Date(T0).toLocaleDateString("de-DE");
+    window.lastVersuche = [...TT9.ab.filter(x => /^Durchgang/.test(x.name)).map(x => [dt, tx(x.a).slice(0, 5), TT9.ort, TT9.reihe, x.name, "", r1(x.min), r1(x.pu), r1(x.rmssd), r1(x.sp), r1(x.up), r1(x.dn), x.band === null ? "" : r1(x.band * 100), r1(x.peak)].join(";")),
+      ...TT9.stk.map(x => [dt, tx(x.a).slice(0, 5), TT9.ort, TT9.reihe, x.durchgang, x.name, r1(x.min), r1(x.pu), r1(x.rmssd), r1(x.sp), r1(x.up), r1(x.dn), x.band === null ? "" : r1(x.band * 100), r1(x.peak)].join(";"))]; }
   { const g = act.blocks.filter(b => /Gehen|Laufen|Joggen/.test(b.name)).reduce((s, b) => s + (b.b - b.a), 0); if (g > 0.5 * (T1 - T0)) { ganz.atem = null; ganz.atemGehen = true; } }
   /* Excel-Blätter mit Diagrammen */
   const PD = [["Minute", "Uhrzeit", "Puls", "Puls_min_10s", "Puls_max_10s", "Taetigkeit_auto", "Epoch_ms"]];
@@ -3124,6 +3199,10 @@ async function extras9(X) {
   const TA = [["Beginn", "Ende", "Dauer_min", "Taetigkeit", "Sicherheit_Prozent", "Grund", "Puls_Mittel", "RMSSD_ms", "Atemzug_s", "Temperatur_C", "WBGT_geschaetzt_C", "Epoch_Beginn_ms", "Epoch_Ende_ms"]];
   act.blocks.forEach(b => TA.push([tx(b.a), tx(b.b), Math.round((b.b - b.a) / 60000), b.name, b.sicher, b.grund, b.st.puls === null ? null : Math.round(b.st.puls), b.st.rmssd === null ? null : Math.round(b.st.rmssd), b.st.atem, b.st.temp === null ? null : Math.round(b.st.temp * 10) / 10, b.st.wbgt === null ? null : Math.round(b.st.wbgt * 10) / 10, Math.round(b.a), Math.round(b.b)]));
   const sheets = [{ name: "Puls_Diagramm", rows: PD, charts: n > 2 ? [pulsChart] : [] },
+    ...(TT9 ? [{ name: "Testablauf", rows: [["Art", "Durchgang", "Abschnitt_oder_Stueck", "Beginn", "Minuten", "Puls", "RMSSD_ms", "Schritte_pro_min", "Hoehe_hinauf_m", "Hoehe_hinunter_m", "Anteil_Atemband_Prozent", "staerkste_Schwingung_pro_min"],
+      ...TT9.ab.map(x => ["Abschnitt", "", x.name, tx(x.a), Math.round(x.min * 10) / 10, Math.round(x.pu), x.rmssd === null ? null : Math.round(x.rmssd * 10) / 10, Math.round(x.sp), Math.round(x.up), Math.round(x.dn), x.band === null ? null : Math.round(x.band * 100), x.peak === null ? null : Math.round(x.peak * 10) / 10]),
+      ...TT9.stk.map(x => ["Stück", x.durchgang, x.name, tx(x.a), Math.round(x.min * 10) / 10, Math.round(x.pu), x.rmssd === null ? null : Math.round(x.rmssd * 10) / 10, Math.round(x.sp), Math.round(x.up), Math.round(x.dn), x.band === null ? null : Math.round(x.band * 100), x.peak === null ? null : Math.round(x.peak * 10) / 10]),
+      [], ["Versuchsort", TT9.ort], ["Reihenfolge", TT9.reihe], ["Atemband Hz", Math.round(TT9.lo * 1000) / 1000 + " bis " + Math.round(TT9.hi * 1000) / 1000]] }] : []),
     { name: "Klima", rows: KD, charts: klima.length ? [{ title: "Temperatur und WBGT geschätzt", xTitle: "Minuten ab Beginn", yTitle: "°C", xMin: 0, series: kser }] : [] },
     { name: "Atem_Diagramm", rows: AD, charts: bs.length ? [{ title: "Dauer je Atemzug", xTitle: "Minuten ab Beginn", yTitle: "Sekunden", xMin: 0, yMin: 0, yMax: 20, series: aser }] : [] },
     { name: "Bewegung", rows: BW, charts: bwn > 2 ? [{ title: "Bewegung je Minute (MAD)", xTitle: "Minuten ab Beginn", yTitle: "mg", xMin: 0, yMin: 0, series: [{ name: "Brust", sheet: "Bewegung", x: "A", y: "C", r1: 2, r2: bwn, color: "333333", line: true, width: 1.25 }, { name: "Fuß", sheet: "Bewegung", x: "A", y: "D", r1: 2, r2: bwn, color: "1BAA7A", line: true, width: 1 }] }] : [] },
@@ -3136,12 +3215,12 @@ async function extras9(X) {
     atem: breaths.map(c => ({ t: rel(c.t), dauer: c.dauer, ein: c.ein, aus: c.aus, quelle: c.quelle, sicher: !!c.sicher })),
     schritte: steps.map(s => ({ t: rel(s.t), seite: s.side, sicher: !!s.sicher })),
     klima: klima.map(k => ({ t: rel(k.t), quelle: k.q, c: Math.round(k.c * 100) / 100, h: k.h === null ? null : Math.round(k.h * 10) / 10, wbgt: k.w === null ? null : Math.round(k.w * 10) / 10, p: k.p === null ? null : Math.round(k.p * 10) / 10, hoehe_m: Number.isFinite(k.hm) ? Math.round(k.hm * 10) / 10 : null })),
-    protokoll: ev.filter(r => ["Stück", "Tätigkeit", "Marker", "Notiz", "Testabschnitt", "Abgleich", "Akku", "Einschlafen", "Atemhilfe", "Gefühl", "Gewicht", "Trageort", "Trageort Ruuvi", "Uhr", "Mikrofon", "Bildschirm"].includes(r.typ)).map(r => ({ t: rel(r.start), ende: r.end ? rel(r.end) : null, typ: r.typ, name: r.name })),
+    protokoll: ev.filter(r => ["Stück", "Tätigkeit", "Marker", "Notiz", "Testabschnitt", "Abgleich", "Akku", "Einschlafen", "Atemhilfe", "Gefühl", "Gewicht", "Trageort", "Trageort Ruuvi", "Uhr", "Mikrofon", "Testablauf", "Bildschirm"].includes(r.typ)).map(r => ({ t: rel(r.start), ende: r.end ? rel(r.end) : null, typ: r.typ, name: r.name })),
     taetigkeiten_auto: act.blocks.map(b => ({ start_ms: rel(b.a), ende_ms: rel(b.b), name: b.name, sicherheit: b.sicher, grund: b.grund })),
     akku: BA.map(b => ({ t: rel(b.t), geraet: b.d, wert: b.txt })),
     strom };
   say2("Schreibe PDF …"); await wait(20);
-  let pdf = null; try { pdf = report9({ T0, T1, minutes, blocks: act.blocks, klima, stats: { ganz }, title: X.title || "" }); } catch (e) { pdf = null; X.err = e; }
+  let pdf = null; try { pdf = report9({ T0, T1, minutes, blocks: act.blocks, klima, stats: { ganz }, title: X.title || "", tt: TT9 }); } catch (e) { pdf = null; X.err = e; }
   const lastBat = {}; BA.forEach(b => lastBat[b.d] = b.txt);
   const kopf = [["WBGT", "geschätzt aus Temperatur und Luftfeuchte, Kugeltemperatur gleich Thermometer (etwa ±2 Punkte)"], ["Tätigkeiten erkannt", act.blocks.map(b => `${tx(b.a).slice(0, 5)} bis ${tx(b.b).slice(0, 5)} ${b.name} (${b.sicher} %)`).join(" | ") || "keine (nur Blöcke ab 20 Minuten)"],
     ["Akku zuletzt", Object.entries(lastBat).map(([k, v]) => `${k} ${v}`).join(", ") || "nicht gelesen"], ["Ruuvi Pakete", RU.length], ["10-Hz-Strom", `${strom.brust.length} Abschnitte Brust, ${strom.fuss.length} Abschnitte Fuß`]];
@@ -3306,6 +3385,13 @@ $("saveall").addEventListener("click", async () => {
     try {
       await ordWrite(h, "ZIP", z.name, z.blob);
       if (z.kern) await ordWrite(h, "Kern", z.kern.name, z.kern.data);
+      if (window.lastVersuche && window.lastVersuche.length) { try {
+        const head = "Datum;Beginn;Ort;Reihenfolge;Durchgang;Stueck;Minuten;Puls;RMSSD_ms;Schritte_pro_min;Hoehe_hinauf_m;Hoehe_hinunter_m;Anteil_Atemband_Prozent;staerkste_Schwingung_pro_min";
+        const dir = await h.getDirectoryHandle("Versuche", { create: true }); let old = "";
+        try { old = await (await (await dir.getFileHandle("Versuche.csv")).getFile()).text(); } catch (e) {}
+        const txt = (old ? old.replace(/\s*$/, "") : "\ufeff" + head) + "\n" + window.lastVersuche.join("\n") + "\n";
+        await ordWrite(h, "Versuche", "Versuche.csv", txt); addEntry({ typ: "Daten", name: `Sammeltabelle Versuche um ${window.lastVersuche.length} Zeilen ergänzt`, start: Date.now() });
+      } catch (e) { addEntry({ typ: "Fehler", name: "Sammeltabelle nicht geschrieben: " + (e.message || e), start: Date.now() }); } }
       $("savestatus").textContent = `Gespeichert im Ordner „${h.name}“: ZIP/${z.name}${z.kern ? ", Kern/" + z.kern.name : ""} (${(z.blob.size / 1e6).toFixed(1)} MB).`;
       addEntry({ typ: "Daten", name: `Im Ordner ${h.name} gespeichert: ${z.name}`, start: Date.now() }); flush();
       return;
